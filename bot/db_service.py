@@ -101,6 +101,7 @@ class DatabaseService:
                     "name": config.name,
                     "mode": config.mode.value if config.mode else "simulation",
                     "status": config.status.value if config.status else "stopped",
+                    "auto_trade": config.auto_trade,
                     "virtual_balance": config.virtual_balance,
                     "current_balance": config.current_balance,
                     "exchange_a": config.exchange_a,

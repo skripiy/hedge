@@ -56,6 +56,7 @@ class BotConfig(Base):
     # Trading mode
     mode = Column(Enum(TradingMode), default=TradingMode.SIMULATION)
     status = Column(Enum(BotStatus), default=BotStatus.STOPPED)
+    auto_trade = Column(Boolean, default=False)
     
     # Virtual balance for simulation
     virtual_balance = Column(Float, default=10000.0)

@@ -49,11 +49,25 @@ BOT_START_TIME: Optional[datetime] = None
 async def startup():
     """Initialize database on startup"""
     await init_db()
+    
+    # Auto-migration: ensure auto_trade column exists
+    from sqlalchemy import text
+    try:
+        async for db in get_db():
+            # Add column if not exists (PostgreSQL syntax)
+            await db.execute(text("ALTER TABLE bot_configs ADD COLUMN IF NOT EXISTS auto_trade BOOLEAN DEFAULT FALSE"))
+            # Enable auto-trade for default config if not set
+            await db.execute(text("UPDATE bot_configs SET auto_trade = TRUE WHERE id = 1"))
+            await db.commit()
+            break
+    except Exception as e:
+        print(f"Migration note: {e}")
+
     # Create default config if not exists
     async for db in get_db():
         result = await db.execute(select(BotConfig).where(BotConfig.id == 1))
         if not result.scalar_one_or_none():
-            default_config = BotConfig(name="Default Strategy")
+            default_config = BotConfig(name="Default Strategy", auto_trade=True)
             db.add(default_config)
             await db.commit()
         break
