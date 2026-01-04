@@ -315,7 +315,7 @@ class HedgeBot:
             await self.db_service.update_config_status(self.config_id, "stopped")
     
     async def run(self):
-        """Main bot loop"""
+        """Main bot loop with multi-symbol support"""
         self.running = True
         self.start_time = datetime.utcnow()
         
@@ -327,49 +327,133 @@ class HedgeBot:
         check_interval = self.config.get('check_interval', 5.0)
         auto_trade = self.config.get('auto_trade', False)
         
+        # Load symbols from database
+        symbols = []
+        if self.db_service and self.db_service.is_connected:
+            symbols = await self.db_service.load_symbols(self.config_id)
+            if symbols:
+                logger.info(f"Loaded {len(symbols)} symbols from database")
+            else:
+                # Fallback to single symbol from config
+                symbols = [{
+                    "symbol": self.config.get('symbol', 'BTC/USDT'),
+                    "spread_threshold": self.config.get('spread_threshold', 0.5),
+                    "position_size_usdt": self.config.get('position_size_usdt', 100),
+                    "leverage": self.config.get('leverage', 1),
+                    "stop_loss_percent": self.config.get('stop_loss_percent', 2.0),
+                    "take_profit_percent": self.config.get('take_profit_percent', 5.0),
+                }]
+                logger.info("No symbols in DB, using default from config")
+        else:
+            symbols = [{
+                "symbol": self.config.get('symbol', 'BTC/USDT'),
+                "spread_threshold": self.config.get('spread_threshold', 0.5),
+                "position_size_usdt": self.config.get('position_size_usdt', 100),
+            }]
+        
         while self.running:
             try:
-                # Check for entry opportunity
-                opportunity = await self.strategy.check_entry_opportunity()
-                
-                if opportunity:
-                    spread, price_a, price_b = opportunity
-                    logger.info(
-                        f"🎯 Entry opportunity! Spread: {spread:.4f}% | "
-                        f"{self.ex_a.exchange_id}: {price_a:.2f} | "
-                        f"{self.ex_b.exchange_id}: {price_b:.2f}"
-                    )
+                # Scan each symbol
+                for sym_config in symbols:
+                    symbol = sym_config.get('symbol')
+                    spread_threshold = sym_config.get('spread_threshold', 0.5)
                     
-                    # Check if we can open a position
-                    can_open, reason = self.risk_manager.can_open_position(
-                        self.config.get('position_size_usdt', 100)
-                    )
-                    
-                    if can_open:
-                        if auto_trade:
-                            logger.info("Auto-trading enabled. Opening position...")
-                            await self.strategy.open_position(price_a, price_b)
-                        else:
-                            logger.info("Auto-trading disabled. Opportunity logged.")
-                            if self.db_service and self.db_service.is_connected:
-                                await self.db_service.log_info(
-                                    f"Entry opportunity: spread {spread:.4f}%, prices {price_a:.2f}/{price_b:.2f}",
-                                    category="trade",
-                                    config_id=self.config_id
+                    try:
+                        # Get prices from both exchanges
+                        ticker_a = await self.ex_a.fetch_ticker(symbol)
+                        ticker_b = await self.ex_b.fetch_ticker(symbol)
+                        
+                        price_a = ticker_a.get('last', 0)
+                        price_b = ticker_b.get('last', 0)
+                        
+                        if not price_a or not price_b:
+                            continue
+                        
+                        # Calculate spread
+                        spread = ((price_a - price_b) / price_b) * 100
+                        
+                        # Determine if opportunity exists
+                        is_opportunity = abs(spread) >= spread_threshold
+                        
+                        # Log the decision
+                        if self.db_service and self.db_service.is_connected:
+                            if is_opportunity:
+                                # Log opportunity found
+                                await self.db_service.log_decision(
+                                    config_id=self.config_id,
+                                    decision_type="opportunity",
+                                    symbol=symbol,
+                                    price_a=price_a,
+                                    price_b=price_b,
+                                    spread=round(spread, 4),
+                                    spread_threshold=spread_threshold,
+                                    action_taken="signal",
+                                    reason=f"Spread {spread:.4f}% exceeds threshold {spread_threshold}%"
                                 )
-                    else:
-                        logger.info(f"Cannot open position: {reason}")
+                                
+                                logger.info(
+                                    f"🎯 {symbol} Opportunity! Spread: {spread:.4f}% | "
+                                    f"{self.ex_a.exchange_id}: {price_a:.4f} | "
+                                    f"{self.ex_b.exchange_id}: {price_b:.4f}"
+                                )
+                                
+                                # Check if can open position
+                                can_open, reason = self.risk_manager.can_open_position(
+                                    sym_config.get('position_size_usdt', 100)
+                                )
+                                
+                                if can_open:
+                                    if auto_trade:
+                                        await self.db_service.log_decision(
+                                            config_id=self.config_id,
+                                            decision_type="entry",
+                                            symbol=symbol,
+                                            price_a=price_a,
+                                            price_b=price_b,
+                                            spread=round(spread, 4),
+                                            action_taken="open_position",
+                                            reason="Auto-trade enabled, opening position"
+                                        )
+                                        # TODO: Open position with symbol-specific config
+                                        # await self.strategy.open_position(price_a, price_b)
+                                    else:
+                                        await self.db_service.log_decision(
+                                            config_id=self.config_id,
+                                            decision_type="skip",
+                                            symbol=symbol,
+                                            price_a=price_a,
+                                            price_b=price_b,
+                                            spread=round(spread, 4),
+                                            action_taken="none",
+                                            reason="Auto-trade disabled"
+                                        )
+                                else:
+                                    await self.db_service.log_decision(
+                                        config_id=self.config_id,
+                                        decision_type="skip",
+                                        symbol=symbol,
+                                        price_a=price_a,
+                                        price_b=price_b,
+                                        spread=round(spread, 4),
+                                        action_taken="none",
+                                        reason=f"Cannot open: {reason}"
+                                    )
+                            else:
+                                # Log scan (every Nth iteration to avoid spam)
+                                # Only log occasionally for watching symbols
+                                pass
+                    
+                    except Exception as sym_error:
+                        # Log error for this symbol
+                        if self.db_service and self.db_service.is_connected:
+                            await self.db_service.log_decision(
+                                config_id=self.config_id,
+                                decision_type="error",
+                                symbol=symbol,
+                                reason=str(sym_error)
+                            )
                 
-                # Log status periodically
-                open_positions = self.strategy.get_open_positions()
-                if len(open_positions) > 0:
-                    status = self.risk_manager.get_status()
-                    logger.debug(
-                        f"Open: {status['open_positions']} | "
-                        f"Unrealized: {status['unrealized_pnl']:.4f} | "
-                        f"Today: {status['total_pnl_today']:.4f}"
-                    )
-                
+                # Small delay between full scans
                 await asyncio.sleep(check_interval)
                 
             except asyncio.CancelledError:

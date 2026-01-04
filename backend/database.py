@@ -47,7 +47,7 @@ async def init_db():
     """Initialize database tables"""
     async with engine.begin() as conn:
         # Import models to register them
-        from backend.models import BotConfig, Trade, Log
+        from backend.models import BotConfig, Trade, Log, SymbolConfig, Decision, PriceCache
         await conn.run_sync(Base.metadata.create_all)
 
 

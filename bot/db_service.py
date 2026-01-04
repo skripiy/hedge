@@ -379,6 +379,87 @@ class DatabaseService:
     async def log_trade(self, message: str, trade_id: str, config_id: int, **kwargs):
         """Convenience method for trade-related logs"""
         await self.log("INFO", "trade", message, config_id=config_id, trade_id=trade_id, **kwargs)
+    
+    # ============ Decision Operations ============
+    
+    async def log_decision(
+        self,
+        config_id: int,
+        decision_type: str,
+        symbol: str,
+        price_a: float = None,
+        price_b: float = None,
+        spread: float = None,
+        spread_threshold: float = None,
+        action_taken: str = None,
+        reason: str = None,
+        position_id: str = None,
+        pnl: float = None,
+        extra_data: dict = None
+    ) -> bool:
+        """Log a bot decision to the database"""
+        try:
+            async with self.async_session() as session:
+                from backend.models import Decision, DecisionType
+                
+                decision = Decision(
+                    config_id=config_id,
+                    decision_type=DecisionType(decision_type),
+                    symbol=symbol,
+                    price_a=price_a,
+                    price_b=price_b,
+                    spread=spread,
+                    spread_threshold=spread_threshold,
+                    action_taken=action_taken,
+                    reason=reason,
+                    position_id=position_id,
+                    pnl=pnl,
+                    extra_data=extra_data
+                )
+                
+                session.add(decision)
+                await session.commit()
+                return True
+                
+        except Exception as e:
+            logger.error(f"Error logging decision: {e}")
+            return False
+    
+    # ============ Symbol Operations ============
+    
+    async def load_symbols(self, config_id: int) -> List[Dict]:
+        """Load enabled symbols for a config"""
+        try:
+            async with self.async_session() as session:
+                from backend.models import SymbolConfig
+                
+                result = await session.execute(
+                    select(SymbolConfig).where(
+                        and_(
+                            SymbolConfig.config_id == config_id,
+                            SymbolConfig.enabled == True
+                        )
+                    )
+                )
+                symbols = result.scalars().all()
+                
+                return [
+                    {
+                        "id": s.id,
+                        "symbol": s.symbol,
+                        "leverage": s.leverage,
+                        "position_size_usdt": s.position_size_usdt,
+                        "spread_threshold": s.spread_threshold,
+                        "stop_loss_percent": s.stop_loss_percent,
+                        "take_profit_percent": s.take_profit_percent,
+                        "max_positions": s.max_positions
+                    }
+                    for s in symbols
+                ]
+                
+        except Exception as e:
+            logger.error(f"Error loading symbols: {e}")
+            return []
 
 
 # Global database service instance
