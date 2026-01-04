@@ -756,17 +756,20 @@ async def get_available_markets(config_id: int = 1, db: AsyncSession = Depends(g
         # Get intersection - symbols on BOTH exchanges
         common_symbols = symbols_a & symbols_b
         
-        # Fetch tickers for price/volume info (batch if possible)
+        # Fetch all tickers for price/volume info
         tickers_a = {}
         tickers_b = {}
         try:
-            tickers_a = await ex_a.fetch_tickers(list(common_symbols)[:50])  # Limit to avoid rate limits
-        except:
-            pass
+            # fetch_tickers() without params gets all tickers
+            all_tickers_a = await ex_a.fetch_tickers()
+            tickers_a = {s: t for s, t in all_tickers_a.items() if s in common_symbols}
+        except Exception as e:
+            print(f"Failed to fetch tickers from {exchange_a}: {e}")
         try:
-            tickers_b = await ex_b.fetch_tickers(list(common_symbols)[:50])
-        except:
-            pass
+            all_tickers_b = await ex_b.fetch_tickers()
+            tickers_b = {s: t for s, t in all_tickers_b.items() if s in common_symbols}
+        except Exception as e:
+            print(f"Failed to fetch tickers from {exchange_b}: {e}")
         
         # Build market list with details
         markets = []
