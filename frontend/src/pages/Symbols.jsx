@@ -169,7 +169,7 @@ export default function Symbols() {
                         </div>
                     ) : (
                         <div style={{ maxHeight: '500px', overflowY: 'auto' }}>
-                            {filteredMarkets.slice(0, 100).map((market) => (
+                            {filteredMarkets.map((market) => (
                                 <div
                                     key={market.symbol}
                                     style={{
@@ -198,11 +198,6 @@ export default function Symbols() {
                                     </button>
                                 </div>
                             ))}
-                            {filteredMarkets.length > 100 && (
-                                <div style={{ padding: '0.5rem 1rem', fontSize: '0.75rem', color: 'var(--text-muted)', textAlign: 'center' }}>
-                                    Showing first 100 of {filteredMarkets.length}. Use search to find more.
-                                </div>
-                            )}
                             {filteredMarkets.length === 0 && searchTerm && (
                                 <div style={{ padding: '1rem', textAlign: 'center', color: 'var(--text-muted)' }}>
                                     No results for "{searchTerm}"
