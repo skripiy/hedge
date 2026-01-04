@@ -1,18 +1,6 @@
 version: '3.8'
 
 services:
-  db:
-    image: postgres:15-alpine
-    restart: always
-    environment:
-      POSTGRES_USER: ${POSTGRES_USER:-user}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-password}
-      POSTGRES_DB: ${POSTGRES_DB:-hedgebot}
-    ports:
-      - "5432:5432"
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
-
   web_api:
     build:
       context: .
@@ -24,9 +12,9 @@ services:
     ports:
       - "8000:8000"
     environment:
-      - DATABASE_URL=postgresql+asyncpg://${POSTGRES_USER:-user}:${POSTGRES_PASSWORD:-password}@db:5432/${POSTGRES_DB:-hedgebot}
-    depends_on:
-      - db
+      - DATABASE_URL=postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@${DB_HOST}:${DB_PORT}/${POSTGRES_DB}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
 
   bot:
     build:
@@ -37,9 +25,15 @@ services:
     volumes:
       - .:/app
     environment:
-      - DATABASE_URL=postgresql+asyncpg://${POSTGRES_USER:-user}:${POSTGRES_PASSWORD:-password}@db:5432/${POSTGRES_DB:-hedgebot}
+      - DATABASE_URL=postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@${DB_HOST}:${DB_PORT}/${POSTGRES_DB}
+      - TRADING_MODE=${TRADING_MODE:-simulation}
+      - EXCHANGE_A=${EXCHANGE_A:-binance}
+      - EXCHANGE_B=${EXCHANGE_B:-bybit}
+      - SYMBOL=${SYMBOL:-BTC/USDT}
+      - CONFIG_ID=${CONFIG_ID:-1}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     depends_on:
-      - db
       - web_api
 
   frontend:
@@ -49,8 +43,7 @@ services:
     restart: always
     ports:
       - "3000:3000"
+    environment:
+      - VITE_API_URL=http://localhost:8000
     depends_on:
       - web_api
-
-volumes:
-  postgres_data:
