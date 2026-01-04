@@ -1,7 +1,8 @@
 """
 SQLAlchemy Models for HedgeBot
+Multi-symbol support with Decision Log
 """
-from sqlalchemy import Column, Integer, String, Float, DateTime, Boolean, Enum, Text, ForeignKey
+from sqlalchemy import Column, Integer, String, Float, DateTime, Boolean, Enum, Text, ForeignKey, JSON
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 from backend.database import Base
@@ -35,6 +36,16 @@ class BotStatus(str, enum.Enum):
     ERROR = "error"
 
 
+class DecisionType(str, enum.Enum):
+    SCAN = "scan"           # Regular price scan
+    OPPORTUNITY = "opportunity"  # Found entry opportunity
+    ENTRY = "entry"         # Entered position
+    SKIP = "skip"           # Skipped opportunity (reason in message)
+    EXIT = "exit"           # Exited position
+    RISK = "risk"           # Risk check
+    ERROR = "error"         # Error occurred
+
+
 class BotConfig(Base):
     """Bot configuration stored in database"""
     __tablename__ = "bot_configs"
@@ -53,7 +64,6 @@ class BotConfig(Base):
     # Exchange settings
     exchange_a = Column(String(50), default="binance")
     exchange_b = Column(String(50), default="bybit")
-    symbol = Column(String(20), default="BTC/USDT")
     
     # API Keys (encrypted in production)
     api_key_a = Column(String(255), nullable=True)
@@ -61,30 +71,52 @@ class BotConfig(Base):
     api_key_b = Column(String(255), nullable=True)
     api_secret_b = Column(String(255), nullable=True)
     
-    # Trading parameters
-    leverage = Column(Integer, default=1)
-    order_type = Column(Enum(OrderType), default=OrderType.MARKET)
-    position_size_usdt = Column(Float, default=100.0)  # Fixed size in USDT
-    position_size_percent = Column(Float, nullable=True)  # Or % of balance
-    
-    # Risk management
-    stop_loss_percent = Column(Float, default=2.0)  # Global stop-loss %
-    take_profit_percent = Column(Float, default=5.0)  # Global take-profit %
-    max_daily_loss = Column(Float, default=500.0)  # Max daily loss in USDT
-    
-    # Entry triggers
-    spread_threshold = Column(Float, default=0.5)  # Min spread % for entry
+    # Global risk management
+    max_daily_loss = Column(Float, default=500.0)
     
     # Fees for simulation
-    taker_fee = Column(Float, default=0.1)  # 0.1%
-    maker_fee = Column(Float, default=0.05)  # 0.05%
-    slippage = Column(Float, default=0.05)  # 0.05% estimated slippage
+    taker_fee = Column(Float, default=0.1)
+    maker_fee = Column(Float, default=0.05)
+    slippage = Column(Float, default=0.05)
     
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
     
     # Relationships
     trades = relationship("Trade", back_populates="config")
+    symbols = relationship("SymbolConfig", back_populates="config")
+
+
+class SymbolConfig(Base):
+    """Per-symbol trading configuration"""
+    __tablename__ = "symbol_configs"
+
+    id = Column(Integer, primary_key=True, index=True)
+    config_id = Column(Integer, ForeignKey("bot_configs.id"), nullable=False)
+    
+    # Symbol settings
+    symbol = Column(String(20), nullable=False)  # e.g., BTC/USDT
+    enabled = Column(Boolean, default=True)
+    
+    # Trading parameters
+    leverage = Column(Integer, default=1)
+    order_type = Column(Enum(OrderType), default=OrderType.MARKET)
+    position_size_usdt = Column(Float, default=100.0)
+    position_size_percent = Column(Float, nullable=True)
+    
+    # Entry triggers
+    spread_threshold = Column(Float, default=0.5)  # Min spread % for entry
+    
+    # Risk management per symbol
+    stop_loss_percent = Column(Float, default=2.0)
+    take_profit_percent = Column(Float, default=5.0)
+    max_positions = Column(Integer, default=1)  # Max concurrent positions for this symbol
+    
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), onupdate=func.now())
+    
+    # Relationships
+    config = relationship("BotConfig", back_populates="symbols")
 
 
 class Trade(Base):
@@ -95,48 +127,75 @@ class Trade(Base):
     config_id = Column(Integer, ForeignKey("bot_configs.id"), nullable=False)
     
     # Trade identification
-    trade_id = Column(String(100), unique=True, index=True)  # UUID
+    trade_id = Column(String(100), unique=True, index=True)
     status = Column(Enum(TradeStatus), default=TradeStatus.OPEN)
     mode = Column(Enum(TradingMode), default=TradingMode.SIMULATION)
     
     # Symbol and exchanges
     symbol = Column(String(20), nullable=False)
-    exchange_a = Column(String(50), nullable=False)  # Long side
-    exchange_b = Column(String(50), nullable=False)  # Short side
+    exchange_a = Column(String(50), nullable=False)
+    exchange_b = Column(String(50), nullable=False)
     
     # Entry data
-    entry_price_a = Column(Float, nullable=False)  # Long entry price
-    entry_price_b = Column(Float, nullable=False)  # Short entry price
-    entry_amount = Column(Float, nullable=False)  # Position size in base currency
-    entry_amount_usdt = Column(Float, nullable=False)  # Position size in USDT
+    entry_price_a = Column(Float, nullable=False)
+    entry_price_b = Column(Float, nullable=False)
+    entry_amount = Column(Float, nullable=False)
+    entry_amount_usdt = Column(Float, nullable=False)
     leverage = Column(Integer, default=1)
     
     open_time = Column(DateTime(timezone=True), server_default=func.now())
     
-    # Exit data (filled on close)
+    # Exit data
     exit_price_a = Column(Float, nullable=True)
     exit_price_b = Column(Float, nullable=True)
     close_time = Column(DateTime(timezone=True), nullable=True)
     
-    # PnL calculations
-    pnl_a = Column(Float, default=0.0)  # PnL from long position
-    pnl_b = Column(Float, default=0.0)  # PnL from short position
-    pnl_net = Column(Float, default=0.0)  # Total PnL after fees
-    fees_paid = Column(Float, default=0.0)  # Total fees
+    # PnL
+    pnl_a = Column(Float, default=0.0)
+    pnl_b = Column(Float, default=0.0)
+    pnl_net = Column(Float, default=0.0)
+    fees_paid = Column(Float, default=0.0)
     
-    # Current prices (updated in real-time for open positions)
+    # Current prices
     current_price_a = Column(Float, nullable=True)
     current_price_b = Column(Float, nullable=True)
     unrealized_pnl = Column(Float, default=0.0)
     
-    # Close reason
-    close_reason = Column(String(50), nullable=True)  # stop_loss, take_profit, manual, panic
+    close_reason = Column(String(50), nullable=True)
     
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
     
-    # Relationships
     config = relationship("BotConfig", back_populates="trades")
+
+
+class Decision(Base):
+    """Bot decision/thought process log"""
+    __tablename__ = "decisions"
+
+    id = Column(Integer, primary_key=True, index=True)
+    config_id = Column(Integer, nullable=True)
+    
+    # Decision details
+    decision_type = Column(Enum(DecisionType), default=DecisionType.SCAN)
+    symbol = Column(String(20), nullable=False)
+    
+    # Market data at decision time
+    price_a = Column(Float, nullable=True)  # Price on exchange A
+    price_b = Column(Float, nullable=True)  # Price on exchange B
+    spread = Column(Float, nullable=True)   # Spread %
+    spread_threshold = Column(Float, nullable=True)  # Required spread
+    
+    # Decision outcome
+    action_taken = Column(String(50), nullable=True)  # entered, skipped, closed, etc.
+    reason = Column(Text, nullable=True)  # Why this decision was made
+    
+    # Additional context
+    position_id = Column(String(100), nullable=True)
+    pnl = Column(Float, nullable=True)
+    extra_data = Column(JSON, nullable=True)  # Additional metrics
+    
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
 
 
 class Log(Base):
@@ -145,13 +204,27 @@ class Log(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     
-    level = Column(String(20), default="INFO")  # INFO, WARNING, ERROR, DEBUG
-    category = Column(String(50), default="system")  # system, trade, risk, api
+    level = Column(String(20), default="INFO")
+    category = Column(String(50), default="system")
     message = Column(Text, nullable=False)
     
-    # Optional context
     trade_id = Column(String(100), nullable=True)
     config_id = Column(Integer, nullable=True)
-    extra_data = Column(Text, nullable=True)  # JSON string for additional data
+    extra_data = Column(Text, nullable=True)
     
     created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+
+class PriceCache(Base):
+    """Cached prices for quick access"""
+    __tablename__ = "price_cache"
+
+    id = Column(Integer, primary_key=True, index=True)
+    symbol = Column(String(20), nullable=False, index=True)
+    exchange = Column(String(50), nullable=False)
+    
+    bid = Column(Float, nullable=True)
+    ask = Column(Float, nullable=True)
+    last = Column(Float, nullable=True)
+    
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())

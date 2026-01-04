@@ -117,3 +117,57 @@ export async function getAnalyticsSummary(configId = 1) {
 export async function healthCheck() {
     return fetchAPI('/health');
 }
+
+// ============ Symbols ============
+
+export async function getSymbols(configId = 1) {
+    return fetchAPI(`/symbols?config_id=${configId}`);
+}
+
+export async function addSymbol(symbol, options = {}) {
+    const params = new URLSearchParams({
+        symbol,
+        config_id: options.configId || 1,
+        enabled: options.enabled ?? true,
+        leverage: options.leverage || 1,
+        position_size_usdt: options.positionSize || 100,
+        spread_threshold: options.spreadThreshold || 0.5,
+        stop_loss_percent: options.stopLoss || 2,
+        take_profit_percent: options.takeProfit || 5,
+    });
+    return fetchAPI(`/symbols?${params.toString()}`, { method: 'POST' });
+}
+
+export async function updateSymbol(symbolId, updates) {
+    const params = new URLSearchParams();
+    Object.entries(updates).forEach(([key, value]) => {
+        if (value !== undefined) params.append(key, value);
+    });
+    return fetchAPI(`/symbols/${symbolId}?${params.toString()}`, { method: 'PUT' });
+}
+
+export async function deleteSymbol(symbolId) {
+    return fetchAPI(`/symbols/${symbolId}`, { method: 'DELETE' });
+}
+
+// ============ Markets (Available Coins) ============
+
+export async function getMarkets(exchange = 'binance') {
+    return fetchAPI(`/markets?exchange=${exchange}`);
+}
+
+// ============ Live Rates ============
+
+export async function getRates(configId = 1) {
+    return fetchAPI(`/rates?config_id=${configId}`);
+}
+
+// ============ Decisions (Bot Thinking) ============
+
+export async function getDecisions(options = {}) {
+    const { configId = 1, symbol, type, limit = 50 } = options;
+    let url = `/decisions?config_id=${configId}&limit=${limit}`;
+    if (symbol) url += `&symbol=${symbol}`;
+    if (type) url += `&decision_type=${type}`;
+    return fetchAPI(url);
+}

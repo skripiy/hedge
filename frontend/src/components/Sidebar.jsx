@@ -5,13 +5,15 @@ import {
     Settings,
     BarChart3,
     ScrollText,
-    Activity
+    Activity,
+    Coins
 } from 'lucide-react';
 
 export default function Sidebar() {
     const navItems = [
         { to: '/', icon: LayoutDashboard, label: 'Dashboard' },
         { to: '/positions', icon: Activity, label: 'Positions' },
+        { to: '/symbols', icon: Coins, label: 'Symbols' },
         { to: '/analytics', icon: BarChart3, label: 'Analytics' },
         { to: '/logs', icon: ScrollText, label: 'Logs' },
         { to: '/settings', icon: Settings, label: 'Settings' },
@@ -41,7 +43,7 @@ export default function Sidebar() {
 
             <div style={{ marginTop: 'auto', paddingTop: '1rem', borderTop: '1px solid var(--border-color)' }}>
                 <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
-                    HedgeBot v1.0.0
+                    HedgeBot v1.1.0
                 </div>
             </div>
         </aside>

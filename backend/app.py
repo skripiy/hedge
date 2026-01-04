@@ -11,7 +11,10 @@ from datetime import datetime, timedelta
 import uuid
 
 from backend.database import get_db, init_db, close_db
-from backend.models import BotConfig, Trade, Log, TradingMode, BotStatus, TradeStatus
+from backend.models import (
+    BotConfig, Trade, Log, SymbolConfig, Decision, PriceCache,
+    TradingMode, BotStatus, TradeStatus, DecisionType
+)
 from backend.schemas import (
     ConfigCreate, ConfigUpdate, ConfigResponse,
     TradeResponse, TradeCloseRequest,
@@ -590,3 +593,357 @@ async def get_analytics_summary(config_id: int = 1, db: AsyncSession = Depends(g
         "total_fees": round(total_fees, 2),
         "net_pnl": round(total_pnl - total_fees, 2)
     }
+
+
+# ============ Symbol Configuration ============
+
+@app.get("/symbols", tags=["Symbols"])
+async def get_symbols(config_id: int = 1, db: AsyncSession = Depends(get_db)):
+    """Get all configured symbols"""
+    result = await db.execute(
+        select(SymbolConfig).where(SymbolConfig.config_id == config_id)
+    )
+    symbols = result.scalars().all()
+    
+    return [
+        {
+            "id": s.id,
+            "symbol": s.symbol,
+            "enabled": s.enabled,
+            "leverage": s.leverage,
+            "position_size_usdt": s.position_size_usdt,
+            "spread_threshold": s.spread_threshold,
+            "stop_loss_percent": s.stop_loss_percent,
+            "take_profit_percent": s.take_profit_percent,
+            "max_positions": s.max_positions
+        }
+        for s in symbols
+    ]
+
+
+@app.post("/symbols", tags=["Symbols"])
+async def add_symbol(
+    symbol: str,
+    config_id: int = 1,
+    enabled: bool = True,
+    leverage: int = 1,
+    position_size_usdt: float = 100.0,
+    spread_threshold: float = 0.5,
+    stop_loss_percent: float = 2.0,
+    take_profit_percent: float = 5.0,
+    db: AsyncSession = Depends(get_db)
+):
+    """Add a new symbol to monitor"""
+    # Check if symbol already exists
+    result = await db.execute(
+        select(SymbolConfig).where(
+            and_(SymbolConfig.config_id == config_id, SymbolConfig.symbol == symbol)
+        )
+    )
+    existing = result.scalar_one_or_none()
+    
+    if existing:
+        raise HTTPException(status_code=400, detail=f"Symbol {symbol} already configured")
+    
+    new_symbol = SymbolConfig(
+        config_id=config_id,
+        symbol=symbol,
+        enabled=enabled,
+        leverage=leverage,
+        position_size_usdt=position_size_usdt,
+        spread_threshold=spread_threshold,
+        stop_loss_percent=stop_loss_percent,
+        take_profit_percent=take_profit_percent
+    )
+    
+    db.add(new_symbol)
+    await db.commit()
+    await db.refresh(new_symbol)
+    
+    return {"success": True, "id": new_symbol.id, "symbol": symbol}
+
+
+@app.put("/symbols/{symbol_id}", tags=["Symbols"])
+async def update_symbol(
+    symbol_id: int,
+    enabled: Optional[bool] = None,
+    leverage: Optional[int] = None,
+    position_size_usdt: Optional[float] = None,
+    spread_threshold: Optional[float] = None,
+    stop_loss_percent: Optional[float] = None,
+    take_profit_percent: Optional[float] = None,
+    db: AsyncSession = Depends(get_db)
+):
+    """Update symbol configuration"""
+    result = await db.execute(select(SymbolConfig).where(SymbolConfig.id == symbol_id))
+    symbol_config = result.scalar_one_or_none()
+    
+    if not symbol_config:
+        raise HTTPException(status_code=404, detail="Symbol not found")
+    
+    if enabled is not None:
+        symbol_config.enabled = enabled
+    if leverage is not None:
+        symbol_config.leverage = leverage
+    if position_size_usdt is not None:
+        symbol_config.position_size_usdt = position_size_usdt
+    if spread_threshold is not None:
+        symbol_config.spread_threshold = spread_threshold
+    if stop_loss_percent is not None:
+        symbol_config.stop_loss_percent = stop_loss_percent
+    if take_profit_percent is not None:
+        symbol_config.take_profit_percent = take_profit_percent
+    
+    await db.commit()
+    return {"success": True, "message": "Symbol updated"}
+
+
+@app.delete("/symbols/{symbol_id}", tags=["Symbols"])
+async def delete_symbol(symbol_id: int, db: AsyncSession = Depends(get_db)):
+    """Delete a symbol configuration"""
+    result = await db.execute(select(SymbolConfig).where(SymbolConfig.id == symbol_id))
+    symbol_config = result.scalar_one_or_none()
+    
+    if not symbol_config:
+        raise HTTPException(status_code=404, detail="Symbol not found")
+    
+    await db.delete(symbol_config)
+    await db.commit()
+    return {"success": True, "message": "Symbol deleted"}
+
+
+# ============ Available Markets (from exchanges) ============
+
+@app.get("/markets", tags=["Markets"])
+async def get_available_markets(exchange: str = "binance"):
+    """Get available trading pairs from exchange"""
+    import ccxt.async_support as ccxt
+    
+    try:
+        exchange_class = getattr(ccxt, exchange.lower())
+        ex = exchange_class({'enableRateLimit': True})
+        
+        await ex.load_markets()
+        
+        # Filter USDT perpetual futures
+        markets = []
+        for symbol, market in ex.markets.items():
+            if market.get('quote') == 'USDT' and market.get('active', True):
+                if market.get('swap') or market.get('future') or market.get('spot'):
+                    markets.append({
+                        "symbol": symbol,
+                        "base": market.get('base'),
+                        "quote": market.get('quote'),
+                        "type": market.get('type', 'spot'),
+                        "active": market.get('active', True)
+                    })
+        
+        await ex.close()
+        
+        # Sort by symbol
+        markets.sort(key=lambda x: x['symbol'])
+        
+        return {"exchange": exchange, "count": len(markets), "markets": markets[:100]}
+    
+    except Exception as e:
+        return {"exchange": exchange, "error": str(e), "markets": []}
+
+
+# ============ Live Rates ============
+
+@app.get("/rates", tags=["Rates"])
+async def get_live_rates(config_id: int = 1, db: AsyncSession = Depends(get_db)):
+    """Get current prices and spreads for all configured symbols"""
+    import ccxt.async_support as ccxt
+    
+    # Get config
+    config_result = await db.execute(select(BotConfig).where(BotConfig.id == config_id))
+    config = config_result.scalar_one_or_none()
+    
+    if not config:
+        raise HTTPException(status_code=404, detail="Config not found")
+    
+    # Get enabled symbols
+    symbols_result = await db.execute(
+        select(SymbolConfig).where(
+            and_(SymbolConfig.config_id == config_id, SymbolConfig.enabled == True)
+        )
+    )
+    symbols = symbols_result.scalars().all()
+    
+    if not symbols:
+        return {"rates": [], "message": "No symbols configured"}
+    
+    rates = []
+    
+    try:
+        # Initialize exchanges
+        ex_a_class = getattr(ccxt, config.exchange_a.lower())
+        ex_b_class = getattr(ccxt, config.exchange_b.lower())
+        
+        ex_a = ex_a_class({'enableRateLimit': True})
+        ex_b = ex_b_class({'enableRateLimit': True})
+        
+        for symbol_config in symbols:
+            try:
+                # Fetch tickers
+                ticker_a = await ex_a.fetch_ticker(symbol_config.symbol)
+                ticker_b = await ex_b.fetch_ticker(symbol_config.symbol)
+                
+                price_a = ticker_a.get('last', 0)
+                price_b = ticker_b.get('last', 0)
+                
+                # Calculate spread
+                if price_a > 0 and price_b > 0:
+                    spread = ((price_a - price_b) / price_b) * 100
+                else:
+                    spread = 0
+                
+                # Determine if entry opportunity
+                is_opportunity = abs(spread) >= symbol_config.spread_threshold
+                
+                # Get additional market data
+                volume_a = ticker_a.get('quoteVolume', 0) or ticker_a.get('baseVolume', 0) * price_a
+                volume_b = ticker_b.get('quoteVolume', 0) or ticker_b.get('baseVolume', 0) * price_b
+                change_24h_a = ticker_a.get('percentage', 0) or 0
+                change_24h_b = ticker_b.get('percentage', 0) or 0
+                
+                rates.append({
+                    "symbol": symbol_config.symbol,
+                    "price_a": round(price_a, 4),
+                    "price_b": round(price_b, 4),
+                    "bid_a": ticker_a.get('bid'),
+                    "ask_a": ticker_a.get('ask'),
+                    "bid_b": ticker_b.get('bid'),
+                    "ask_b": ticker_b.get('ask'),
+                    "spread": round(spread, 4),
+                    "spread_threshold": symbol_config.spread_threshold,
+                    "is_opportunity": is_opportunity,
+                    "exchange_a": config.exchange_a,
+                    "exchange_b": config.exchange_b,
+                    "volume_24h": round((volume_a + volume_b) / 2, 2),
+                    "volume_a": round(volume_a, 2),
+                    "volume_b": round(volume_b, 2),
+                    "change_24h_a": round(change_24h_a, 2),
+                    "change_24h_b": round(change_24h_b, 2),
+                    "high_a": ticker_a.get('high'),
+                    "low_a": ticker_a.get('low'),
+                    "position_size_usdt": symbol_config.position_size_usdt
+                })
+                
+                # Cache prices
+                for ex_name, price in [(config.exchange_a, price_a), (config.exchange_b, price_b)]:
+                    cache_result = await db.execute(
+                        select(PriceCache).where(
+                            and_(
+                                PriceCache.symbol == symbol_config.symbol,
+                                PriceCache.exchange == ex_name
+                            )
+                        )
+                    )
+                    cache = cache_result.scalar_one_or_none()
+                    if cache:
+                        cache.last = price
+                    else:
+                        db.add(PriceCache(symbol=symbol_config.symbol, exchange=ex_name, last=price))
+                
+            except Exception as e:
+                rates.append({
+                    "symbol": symbol_config.symbol,
+                    "error": str(e)
+                })
+        
+        await ex_a.close()
+        await ex_b.close()
+        await db.commit()
+        
+    except Exception as e:
+        return {"rates": [], "error": str(e)}
+    
+    return {
+        "rates": rates,
+        "exchange_a": config.exchange_a,
+        "exchange_b": config.exchange_b,
+        "timestamp": datetime.utcnow().isoformat()
+    }
+
+
+# ============ Decision Log (Bot Thinking) ============
+
+@app.get("/decisions", tags=["Decisions"])
+async def get_decisions(
+    config_id: int = 1,
+    symbol: Optional[str] = None,
+    decision_type: Optional[str] = None,
+    limit: int = Query(default=50, le=200),
+    db: AsyncSession = Depends(get_db)
+):
+    """Get bot decision log (thought process)"""
+    query = select(Decision).where(Decision.config_id == config_id)
+    
+    if symbol:
+        query = query.where(Decision.symbol == symbol)
+    if decision_type:
+        query = query.where(Decision.decision_type == decision_type)
+    
+    query = query.order_by(Decision.created_at.desc()).limit(limit)
+    
+    result = await db.execute(query)
+    decisions = result.scalars().all()
+    
+    return [
+        {
+            "id": d.id,
+            "type": d.decision_type.value if d.decision_type else "scan",
+            "symbol": d.symbol,
+            "price_a": d.price_a,
+            "price_b": d.price_b,
+            "spread": d.spread,
+            "spread_threshold": d.spread_threshold,
+            "action": d.action_taken,
+            "reason": d.reason,
+            "pnl": d.pnl,
+            "position_id": d.position_id,
+            "timestamp": d.created_at.isoformat() if d.created_at else None
+        }
+        for d in decisions
+    ]
+
+
+@app.post("/decisions", tags=["Decisions"])
+async def log_decision(
+    decision_type: str,
+    symbol: str,
+    price_a: Optional[float] = None,
+    price_b: Optional[float] = None,
+    spread: Optional[float] = None,
+    action_taken: Optional[str] = None,
+    reason: Optional[str] = None,
+    position_id: Optional[str] = None,
+    pnl: Optional[float] = None,
+    config_id: int = 1,
+    db: AsyncSession = Depends(get_db)
+):
+    """Log a bot decision (used by bot internally)"""
+    try:
+        dtype = DecisionType(decision_type)
+    except ValueError:
+        dtype = DecisionType.SCAN
+    
+    decision = Decision(
+        config_id=config_id,
+        decision_type=dtype,
+        symbol=symbol,
+        price_a=price_a,
+        price_b=price_b,
+        spread=spread,
+        action_taken=action_taken,
+        reason=reason,
+        position_id=position_id,
+        pnl=pnl
+    )
+    
+    db.add(decision)
+    await db.commit()
+    
+    return {"success": True, "id": decision.id}

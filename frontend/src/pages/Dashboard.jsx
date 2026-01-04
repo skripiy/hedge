@@ -1,10 +1,10 @@
 import React, { useCallback, useState } from 'react';
 import StatCard, { StatusCard } from '../components/StatCard';
 import PositionsTable from '../components/PositionsTable';
-import LogsPanel from '../components/LogsPanel';
 import ControlPanel from '../components/ControlPanel';
-import EquityChart from '../components/EquityChart';
-import { usePolling, useAsync } from '../hooks';
+import RatesPanel from '../components/RatesPanel';
+import DecisionsPanel from '../components/DecisionsPanel';
+import { usePolling } from '../hooks';
 import * as api from '../api';
 
 export default function Dashboard() {
@@ -20,18 +20,6 @@ export default function Dashboard() {
     const { data: positions, loading: positionsLoading, refetch: refetchPositions } = usePolling(
         useCallback(() => api.getPositions(1), []),
         5000
-    );
-
-    // Poll logs every 10 seconds
-    const { data: logs, loading: logsLoading } = usePolling(
-        useCallback(() => api.getLogs({ configId: 1, limit: 50 }), []),
-        10000
-    );
-
-    // Poll equity curve every 30 seconds
-    const { data: equity, loading: equityLoading } = usePolling(
-        useCallback(() => api.getEquityCurve(1, 30), []),
-        30000
     );
 
     // Handle bot actions
@@ -158,45 +146,30 @@ export default function Dashboard() {
                         <StatusCard
                             label="Exchange A"
                             status={status?.exchange_a_connected ? 'connected' : 'disconnected'}
-                            subtitle="Binance"
+                            subtitle={status?.exchange_a || 'Binance'}
                         />
                         <StatusCard
                             label="Exchange B"
                             status={status?.exchange_b_connected ? 'connected' : 'disconnected'}
-                            subtitle="Bybit"
+                            subtitle={status?.exchange_b || 'Bybit'}
                         />
                     </div>
                 </div>
             </div>
 
-            {/* Equity Chart */}
-            <div className="card" style={{ marginBottom: '1.5rem' }}>
-                <div className="card-header">
-                    <h3 className="card-title">Equity Curve</h3>
-                    {equity && (
-                        <span style={{ fontSize: '0.875rem' }}>
-                            Total PnL:
-                            <strong className={equity.total_pnl >= 0 ? 'positive' : 'negative'} style={{ marginLeft: '0.5rem' }}>
-                                ${equity.total_pnl?.toFixed(2) || '0.00'}
-                            </strong>
-                        </span>
-                    )}
-                </div>
-                <EquityChart data={equity?.data || []} loading={equityLoading} />
+            {/* Live Rates */}
+            <div style={{ marginBottom: '1.5rem' }}>
+                <RatesPanel configId={1} />
             </div>
 
-            {/* Positions + Logs */}
-            <div className="grid-2">
+            {/* Positions + Bot Thinking */}
+            <div className="grid-2" style={{ marginBottom: '1.5rem' }}>
                 <PositionsTable
                     positions={positions || []}
                     loading={positionsLoading}
                     onClose={handleClosePosition}
                 />
-                <LogsPanel
-                    logs={logs || []}
-                    loading={logsLoading}
-                    maxHeight="350px"
-                />
+                <DecisionsPanel configId={1} limit={30} />
             </div>
         </div>
     );
