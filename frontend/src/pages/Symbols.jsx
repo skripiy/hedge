@@ -5,9 +5,9 @@ import * as api from '../api';
 
 export default function Symbols() {
     const [markets, setMarkets] = useState([]);
+    const [marketInfo, setMarketInfo] = useState(null);
     const [searchTerm, setSearchTerm] = useState('');
     const [loadingMarkets, setLoadingMarkets] = useState(false);
-    const [selectedExchange, setSelectedExchange] = useState('binance');
     const [message, setMessage] = useState(null);
 
     // Get configured symbols
@@ -16,12 +16,19 @@ export default function Symbols() {
         10000
     );
 
-    // Load available markets
+    // Load available markets (common to both exchanges)
     const loadMarkets = async () => {
         setLoadingMarkets(true);
         try {
-            const data = await api.getMarkets(selectedExchange);
+            const data = await api.getMarkets(1);
             setMarkets(data.markets || []);
+            setMarketInfo({
+                exchange_a: data.exchange_a,
+                exchange_b: data.exchange_b,
+                total_a: data.total_a,
+                total_b: data.total_b,
+                common: data.count
+            });
         } catch (error) {
             setMessage({ type: 'error', text: `Failed to load markets: ${error.message}` });
         } finally {
@@ -31,7 +38,7 @@ export default function Symbols() {
 
     useEffect(() => {
         loadMarkets();
-    }, [selectedExchange]);
+    }, []);
 
     // Filter markets by search
     const filteredMarkets = markets.filter(m =>
@@ -137,16 +144,11 @@ export default function Symbols() {
                 <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
                     <div className="card-header" style={{ padding: '1rem 1.5rem', borderBottom: '1px solid var(--border-color)' }}>
                         <h3 className="card-title">Available Markets</h3>
-                        <select
-                            className="form-input form-select"
-                            style={{ width: 'auto', padding: '0.25rem 2rem 0.25rem 0.5rem' }}
-                            value={selectedExchange}
-                            onChange={(e) => setSelectedExchange(e.target.value)}
-                        >
-                            <option value="binance">Binance</option>
-                            <option value="bybit">Bybit</option>
-                            <option value="okx">OKX</option>
-                        </select>
+                        {marketInfo && (
+                            <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
+                                {marketInfo.common} common ({marketInfo.exchange_a} ∩ {marketInfo.exchange_b})
+                            </span>
+                        )}
                     </div>
 
                     <div style={{ padding: '0.5rem 1rem', borderBottom: '1px solid var(--border-color)' }}>

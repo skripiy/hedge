@@ -715,38 +715,76 @@ async def delete_symbol(symbol_id: int, db: AsyncSession = Depends(get_db)):
 # ============ Available Markets (from exchanges) ============
 
 @app.get("/markets", tags=["Markets"])
-async def get_available_markets(exchange: str = "binance"):
-    """Get available trading pairs from exchange"""
+async def get_available_markets(config_id: int = 1, db: AsyncSession = Depends(get_db)):
+    """Get trading pairs available on BOTH configured exchanges"""
     import ccxt.async_support as ccxt
     
+    # Get config to know which exchanges to compare
+    config_result = await db.execute(select(BotConfig).where(BotConfig.id == config_id))
+    config = config_result.scalar_one_or_none()
+    
+    if not config:
+        return {"error": "Config not found", "markets": []}
+    
+    exchange_a = config.exchange_a
+    exchange_b = config.exchange_b
+    
     try:
-        exchange_class = getattr(ccxt, exchange.lower())
-        ex = exchange_class({'enableRateLimit': True})
+        # Initialize both exchanges
+        ex_a_class = getattr(ccxt, exchange_a.lower())
+        ex_b_class = getattr(ccxt, exchange_b.lower())
         
-        await ex.load_markets()
+        ex_a = ex_a_class({'enableRateLimit': True})
+        ex_b = ex_b_class({'enableRateLimit': True})
         
-        # Filter USDT perpetual futures
-        markets = []
-        for symbol, market in ex.markets.items():
+        # Load markets from both
+        await ex_a.load_markets()
+        await ex_b.load_markets()
+        
+        # Get USDT symbols from each exchange
+        symbols_a = set()
+        symbols_b = set()
+        
+        for symbol, market in ex_a.markets.items():
             if market.get('quote') == 'USDT' and market.get('active', True):
-                if market.get('swap') or market.get('future') or market.get('spot'):
-                    markets.append({
-                        "symbol": symbol,
-                        "base": market.get('base'),
-                        "quote": market.get('quote'),
-                        "type": market.get('type', 'spot'),
-                        "active": market.get('active', True)
-                    })
+                symbols_a.add(symbol)
         
-        await ex.close()
+        for symbol, market in ex_b.markets.items():
+            if market.get('quote') == 'USDT' and market.get('active', True):
+                symbols_b.add(symbol)
+        
+        # Get intersection - symbols on BOTH exchanges
+        common_symbols = symbols_a & symbols_b
+        
+        # Build market list with details from exchange A
+        markets = []
+        for symbol in common_symbols:
+            market = ex_a.markets.get(symbol, {})
+            markets.append({
+                "symbol": symbol,
+                "base": market.get('base'),
+                "quote": market.get('quote'),
+                "type": market.get('type', 'spot'),
+                "active": True
+            })
+        
+        await ex_a.close()
+        await ex_b.close()
         
         # Sort by symbol
         markets.sort(key=lambda x: x['symbol'])
         
-        return {"exchange": exchange, "count": len(markets), "markets": markets}
+        return {
+            "exchange_a": exchange_a,
+            "exchange_b": exchange_b,
+            "count": len(markets),
+            "total_a": len(symbols_a),
+            "total_b": len(symbols_b),
+            "markets": markets
+        }
     
     except Exception as e:
-        return {"exchange": exchange, "error": str(e), "markets": []}
+        return {"error": str(e), "markets": []}
 
 
 # ============ Live Rates ============

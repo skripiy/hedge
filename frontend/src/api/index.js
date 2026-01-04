@@ -150,10 +150,10 @@ export async function deleteSymbol(symbolId) {
     return fetchAPI(`/symbols/${symbolId}`, { method: 'DELETE' });
 }
 
-// ============ Markets (Available Coins) ============
+// ============ Markets (Available Coins on BOTH exchanges) ============
 
-export async function getMarkets(exchange = 'binance') {
-    return fetchAPI(`/markets?exchange=${exchange}`);
+export async function getMarkets(configId = 1) {
+    return fetchAPI(`/markets?config_id=${configId}`);
 }
 
 // ============ Live Rates ============
