@@ -756,23 +756,46 @@ async def get_available_markets(config_id: int = 1, db: AsyncSession = Depends(g
         # Get intersection - symbols on BOTH exchanges
         common_symbols = symbols_a & symbols_b
         
-        # Build market list with details from exchange A
+        # Fetch tickers for price/volume info (batch if possible)
+        tickers_a = {}
+        tickers_b = {}
+        try:
+            tickers_a = await ex_a.fetch_tickers(list(common_symbols)[:50])  # Limit to avoid rate limits
+        except:
+            pass
+        try:
+            tickers_b = await ex_b.fetch_tickers(list(common_symbols)[:50])
+        except:
+            pass
+        
+        # Build market list with details
         markets = []
         for symbol in common_symbols:
             market = ex_a.markets.get(symbol, {})
+            ticker_a = tickers_a.get(symbol, {})
+            ticker_b = tickers_b.get(symbol, {})
+            
+            price = ticker_a.get('last') or ticker_b.get('last') or 0
+            volume_a = ticker_a.get('quoteVolume', 0) or 0
+            volume_b = ticker_b.get('quoteVolume', 0) or 0
+            change_24h = ticker_a.get('percentage') or ticker_b.get('percentage') or 0
+            
             markets.append({
                 "symbol": symbol,
                 "base": market.get('base'),
                 "quote": market.get('quote'),
                 "type": market.get('type', 'spot'),
+                "price": round(price, 6) if price else None,
+                "volume_24h": round(volume_a + volume_b, 2) if (volume_a or volume_b) else None,
+                "change_24h": round(change_24h, 2) if change_24h else None,
                 "active": True
             })
         
         await ex_a.close()
         await ex_b.close()
         
-        # Sort by symbol
-        markets.sort(key=lambda x: x['symbol'])
+        # Sort by volume (highest first)
+        markets.sort(key=lambda x: x.get('volume_24h') or 0, reverse=True)
         
         return {
             "exchange_a": exchange_a,
