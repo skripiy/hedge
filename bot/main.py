@@ -363,8 +363,11 @@ class HedgeBot:
                         ticker_a = await self.ex_a.fetch_ticker(symbol)
                         ticker_b = await self.ex_b.fetch_ticker(symbol)
                         
-                        price_a = ticker_a.get('last', 0)
-                        price_b = ticker_b.get('last', 0)
+                        if not ticker_a or not ticker_b:
+                            continue
+                            
+                        price_a = ticker_a.last
+                        price_b = ticker_b.last
                         
                         if not price_a or not price_b:
                             continue
