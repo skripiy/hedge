@@ -44,6 +44,6 @@ services:
     ports:
       - "3500:3000"
     environment:
-      - VITE_API_URL=http://localhost:8000
+      - VITE_API_URL=http://${API_HOST:-localhost}:8000
     depends_on:
       - web_api
