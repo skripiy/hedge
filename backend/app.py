@@ -743,7 +743,7 @@ async def get_available_markets(exchange: str = "binance"):
         # Sort by symbol
         markets.sort(key=lambda x: x['symbol'])
         
-        return {"exchange": exchange, "count": len(markets), "markets": markets[:100]}
+        return {"exchange": exchange, "count": len(markets), "markets": markets}
     
     except Exception as e:
         return {"exchange": exchange, "error": str(e), "markets": []}
