@@ -1,6 +1,21 @@
 version: '3.8'
 
 services:
+  nginx:
+    build:
+      context: ./nginx
+      dockerfile: Dockerfile
+    restart: always
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx/ssl:/etc/nginx/ssl:ro
+      - ./nginx/.htpasswd:/etc/nginx/.htpasswd:ro
+    depends_on:
+      - frontend
+      - web_api
+
   web_api:
     build:
       context: .
@@ -9,8 +24,8 @@ services:
     command: uvicorn backend.app:app --host 0.0.0.0 --port 8000 --reload
     volumes:
       - .:/app
-    ports:
-      - "8000:8000"
+    expose:
+      - "8000"
     environment:
       - DATABASE_URL=postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@${DB_HOST}:${DB_PORT}/${POSTGRES_DB}
     extra_hosts:
@@ -41,9 +56,9 @@ services:
       context: ./frontend
       dockerfile: Dockerfile
     restart: always
-    ports:
-      - "3500:3000"
+    expose:
+      - "3000"
     environment:
-      - VITE_API_URL=http://${API_HOST:-localhost}:8000
+      - VITE_API_URL=https://${DOMAIN:-localhost}/api
     depends_on:
       - web_api
