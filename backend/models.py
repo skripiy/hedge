@@ -56,7 +56,6 @@ class BotConfig(Base):
     # Trading mode
     mode = Column(Enum(TradingMode), default=TradingMode.SIMULATION)
     status = Column(Enum(BotStatus), default=BotStatus.STOPPED)
-    auto_trade = Column(Boolean, default=False)
     
     # Virtual balance for simulation
     virtual_balance = Column(Float, default=10000.0)
@@ -79,6 +78,16 @@ class BotConfig(Base):
     taker_fee = Column(Float, default=0.1)
     maker_fee = Column(Float, default=0.05)
     slippage = Column(Float, default=0.05)
+    
+    # Volume Farming Strategy Settings
+    strategy_mode = Column(String(30), default="hedge")  # "hedge" | "volume_break_even"
+    min_hold_time_minutes = Column(Integer, default=60)
+    max_hold_time_minutes = Column(Integer, default=480)
+    close_only_if_profitable = Column(Boolean, default=True)
+    min_entry_spread_percent = Column(Float, default=0.30)
+    target_daily_volume = Column(Float, default=100000.0)
+    max_concurrent_positions = Column(Integer, default=5)
+    use_maker_orders = Column(Boolean, default=False)
     
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
@@ -163,6 +172,10 @@ class Trade(Base):
     unrealized_pnl = Column(Float, default=0.0)
     
     close_reason = Column(String(50), nullable=True)
+    
+    # Volume Farming metrics
+    volume_generated = Column(Float, default=0.0)  # position_size × 2 × leverage
+    hold_duration_seconds = Column(Integer, nullable=True)
     
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())

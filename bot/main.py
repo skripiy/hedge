@@ -315,7 +315,10 @@ class HedgeBot:
             await self.db_service.update_config_status(self.config_id, "stopped")
     
     async def run(self):
-        """Main bot loop with multi-symbol support"""
+        """Main bot loop with multi-symbol and strategy mode support"""
+        from bot.volume_strategy import VolumeStrategy, VolumeStrategyConfig, CloseDecision
+        from datetime import timedelta
+        
         self.running = True
         self.start_time = datetime.utcnow()
         
@@ -325,7 +328,27 @@ class HedgeBot:
         logger.info("Bot is running. Press Ctrl+C to stop.")
         
         check_interval = self.config.get('check_interval', 5.0)
-        auto_trade = self.config.get('auto_trade', False)
+        strategy_mode = self.config.get('strategy_mode', 'hedge')
+        
+        # Initialize VolumeStrategy if in volume mode
+        volume_strategy = None
+        if strategy_mode == 'volume_break_even':
+            vol_config = VolumeStrategyConfig(
+                min_hold_time_minutes=self.config.get('min_hold_time_minutes', 60),
+                max_hold_time_minutes=self.config.get('max_hold_time_minutes', 480),
+                close_only_if_profitable=self.config.get('close_only_if_profitable', True),
+                min_entry_spread_percent=self.config.get('min_entry_spread_percent', 0.30),
+                emergency_stop_loss_percent=self.config.get('emergency_stop_loss_percent', 2.0),
+                taker_fee_percent=self.config.get('taker_fee', 0.05),
+                maker_fee_percent=self.config.get('maker_fee', 0.02),
+                slippage_percent=self.config.get('slippage', 0.02),
+                use_maker_orders=self.config.get('use_maker_orders', False)
+            )
+            volume_strategy = VolumeStrategy(self.ex_a, self.ex_b, vol_config)
+            logger.info(f"📊 Volume Farming mode: break-even spread = {vol_config.break_even_spread:.4f}%")
+        
+        # Track open positions with their open times
+        open_positions: Dict[str, dict] = {}  # symbol -> {open_time, entry_prices, pnl...}
         
         # Load symbols from database
         symbols = []
@@ -334,14 +357,11 @@ class HedgeBot:
             if symbols:
                 logger.info(f"Loaded {len(symbols)} symbols from database")
             else:
-                # Fallback to single symbol from config
                 symbols = [{
                     "symbol": self.config.get('symbol', 'BTC/USDT'),
                     "spread_threshold": self.config.get('spread_threshold', 0.5),
                     "position_size_usdt": self.config.get('position_size_usdt', 100),
                     "leverage": self.config.get('leverage', 1),
-                    "stop_loss_percent": self.config.get('stop_loss_percent', 2.0),
-                    "take_profit_percent": self.config.get('take_profit_percent', 5.0),
                 }]
                 logger.info("No symbols in DB, using default from config")
         else:
@@ -356,7 +376,8 @@ class HedgeBot:
                 # Scan each symbol
                 for sym_config in symbols:
                     symbol = sym_config.get('symbol')
-                    spread_threshold = sym_config.get('spread_threshold', 0.5)
+                    position_size = sym_config.get('position_size_usdt', 100)
+                    leverage = sym_config.get('leverage', 1)
                     
                     try:
                         # Get prices from both exchanges
@@ -365,7 +386,7 @@ class HedgeBot:
                         
                         if not ticker_a or not ticker_b:
                             continue
-                            
+                        
                         price_a = ticker_a.last
                         price_b = ticker_b.last
                         
@@ -375,79 +396,108 @@ class HedgeBot:
                         # Calculate spread
                         spread = ((price_a - price_b) / price_b) * 100
                         
-                        # Determine if opportunity exists
-                        is_opportunity = abs(spread) >= spread_threshold
-                        
-                        # Log the decision
-                        if self.db_service and self.db_service.is_connected:
-                            if is_opportunity:
-                                # Log opportunity found
-                                await self.db_service.log_decision(
-                                    config_id=self.config_id,
-                                    decision_type="opportunity",
-                                    symbol=symbol,
-                                    price_a=price_a,
-                                    price_b=price_b,
-                                    spread=round(spread, 4),
-                                    spread_threshold=spread_threshold,
-                                    action_taken="signal",
-                                    reason=f"Spread {spread:.4f}% exceeds threshold {spread_threshold}%"
+                        # Check for existing position
+                        if symbol in open_positions:
+                            pos = open_positions[symbol]
+                            elapsed = datetime.utcnow() - pos['open_time']
+                            
+                            # Calculate current PnL
+                            pnl_a = (price_a - pos['entry_price_a']) * pos['amount']
+                            pnl_b = (pos['entry_price_b'] - price_b) * pos['amount']
+                            net_pnl = pnl_a + pnl_b - pos.get('fees', 0)
+                            pnl_percent = (net_pnl / position_size) * 100
+                            
+                            # Decide if should close
+                            if volume_strategy:
+                                decision, reason = volume_strategy.should_close(
+                                    pos, pnl_percent, elapsed
                                 )
                                 
-                                logger.info(
-                                    f"🎯 {symbol} Opportunity! Spread: {spread:.4f}% | "
-                                    f"{self.ex_a.exchange_id}: {price_a:.4f} | "
-                                    f"{self.ex_b.exchange_id}: {price_b:.4f}"
-                                )
-                                
-                                # Check if can open position
-                                can_open, reason = self.risk_manager.can_open_position(
-                                    sym_config.get('position_size_usdt', 100)
-                                )
-                                
-                                if can_open:
-                                    if auto_trade:
-                                        await self.db_service.log_decision(
-                                            config_id=self.config_id,
-                                            decision_type="entry",
-                                            symbol=symbol,
-                                            price_a=price_a,
-                                            price_b=price_b,
-                                            spread=round(spread, 4),
-                                            action_taken="open_position",
-                                            reason="Auto-trade enabled, opening position"
-                                        )
-                                        # TODO: Open position with symbol-specific config
-                                        # await self.strategy.open_position(price_a, price_b)
-                                    else:
-                                        await self.db_service.log_decision(
-                                            config_id=self.config_id,
-                                            decision_type="skip",
-                                            symbol=symbol,
-                                            price_a=price_a,
-                                            price_b=price_b,
-                                            spread=round(spread, 4),
-                                            action_taken="none",
-                                            reason="Auto-trade disabled"
-                                        )
-                                else:
+                                if decision != CloseDecision.HOLD:
                                     await self.db_service.log_decision(
                                         config_id=self.config_id,
-                                        decision_type="skip",
+                                        decision_type="exit",
                                         symbol=symbol,
                                         price_a=price_a,
                                         price_b=price_b,
                                         spread=round(spread, 4),
-                                        action_taken="none",
-                                        reason=f"Cannot open: {reason}"
+                                        action_taken=decision.value,
+                                        reason=reason,
+                                        pnl=round(net_pnl, 4)
                                     )
+                                    
+                                    volume = volume_strategy.calculate_volume_generated(position_size, leverage)
+                                    hold_seconds = int(elapsed.total_seconds())
+                                    
+                                    logger.info(
+                                        f"📤 {symbol} CLOSE: {decision.value} | "
+                                        f"PnL: ${net_pnl:.2f} | Hold: {hold_seconds}s | Vol: ${volume}"
+                                    )
+                                    
+                                    del open_positions[symbol]
+                                else:
+                                    # Still holding
+                                    if elapsed.total_seconds() % 60 < check_interval:
+                                        logger.debug(f"⏳ {symbol} HOLD: {reason}")
+                            continue
+                        
+                        # No position - check for entry
+                        if volume_strategy:
+                            # Volume mode: use break-even logic
+                            should_enter, reason = await volume_strategy.should_enter(symbol, abs(spread))
+                        else:
+                            # Classic hedge mode
+                            threshold = sym_config.get('spread_threshold', 0.5)
+                            should_enter = abs(spread) >= threshold
+                            reason = f"Spread {spread:.4f}% vs threshold {threshold}%"
+                        
+                        if should_enter and self.db_service and self.db_service.is_connected:
+                            can_open, risk_reason = self.risk_manager.can_open_position(position_size)
+                            
+                            if can_open:
+                                # Simulate opening position
+                                avg_price = (price_a + price_b) / 2
+                                amount = position_size / avg_price
+                                fees = position_size * (self.config.get('taker_fee', 0.05) / 100) * 2
+                                
+                                open_positions[symbol] = {
+                                    'open_time': datetime.utcnow(),
+                                    'entry_price_a': price_a,
+                                    'entry_price_b': price_b,
+                                    'amount': amount,
+                                    'position_size': position_size,
+                                    'leverage': leverage,
+                                    'fees': fees
+                                }
+                                
+                                await self.db_service.log_decision(
+                                    config_id=self.config_id,
+                                    decision_type="entry",
+                                    symbol=symbol,
+                                    price_a=price_a,
+                                    price_b=price_b,
+                                    spread=round(spread, 4),
+                                    action_taken="open_position",
+                                    reason=reason
+                                )
+                                
+                                logger.info(
+                                    f"📥 {symbol} ENTRY | Spread: {spread:.4f}% | "
+                                    f"A: ${price_a:.2f} B: ${price_b:.2f}"
+                                )
                             else:
-                                # Log scan (every Nth iteration to avoid spam)
-                                # Only log occasionally for watching symbols
-                                pass
+                                await self.db_service.log_decision(
+                                    config_id=self.config_id,
+                                    decision_type="skip",
+                                    symbol=symbol,
+                                    price_a=price_a,
+                                    price_b=price_b,
+                                    spread=round(spread, 4),
+                                    action_taken="none",
+                                    reason=f"Risk check: {risk_reason}"
+                                )
                     
                     except Exception as sym_error:
-                        # Log error for this symbol
                         if self.db_service and self.db_service.is_connected:
                             await self.db_service.log_decision(
                                 config_id=self.config_id,
@@ -456,7 +506,6 @@ class HedgeBot:
                                 reason=str(sym_error)
                             )
                 
-                # Small delay between full scans
                 await asyncio.sleep(check_interval)
                 
             except asyncio.CancelledError:

@@ -50,24 +50,34 @@ async def startup():
     """Initialize database on startup"""
     await init_db()
     
-    # Auto-migration: ensure auto_trade column exists
+    # Auto-migrate: add new Volume Farming columns
     from sqlalchemy import text
+    migrations = [
+        "ALTER TABLE bot_configs ADD COLUMN IF NOT EXISTS strategy_mode VARCHAR(30) DEFAULT 'hedge'",
+        "ALTER TABLE bot_configs ADD COLUMN IF NOT EXISTS min_hold_time_minutes INTEGER DEFAULT 60",
+        "ALTER TABLE bot_configs ADD COLUMN IF NOT EXISTS max_hold_time_minutes INTEGER DEFAULT 480",
+        "ALTER TABLE bot_configs ADD COLUMN IF NOT EXISTS close_only_if_profitable BOOLEAN DEFAULT TRUE",
+        "ALTER TABLE bot_configs ADD COLUMN IF NOT EXISTS min_entry_spread_percent FLOAT DEFAULT 0.30",
+        "ALTER TABLE bot_configs ADD COLUMN IF NOT EXISTS target_daily_volume FLOAT DEFAULT 100000.0",
+        "ALTER TABLE bot_configs ADD COLUMN IF NOT EXISTS max_concurrent_positions INTEGER DEFAULT 5",
+        "ALTER TABLE bot_configs ADD COLUMN IF NOT EXISTS use_maker_orders BOOLEAN DEFAULT FALSE",
+        "ALTER TABLE trades ADD COLUMN IF NOT EXISTS volume_generated FLOAT DEFAULT 0.0",
+        "ALTER TABLE trades ADD COLUMN IF NOT EXISTS hold_duration_seconds INTEGER",
+    ]
     try:
         async for db in get_db():
-            # Add column if not exists (PostgreSQL syntax)
-            await db.execute(text("ALTER TABLE bot_configs ADD COLUMN IF NOT EXISTS auto_trade BOOLEAN DEFAULT FALSE"))
-            # Enable auto-trade for default config if not set
-            await db.execute(text("UPDATE bot_configs SET auto_trade = TRUE WHERE id = 1"))
+            for sql in migrations:
+                await db.execute(text(sql))
             await db.commit()
             break
     except Exception as e:
         print(f"Migration note: {e}")
-
+    
     # Create default config if not exists
     async for db in get_db():
         result = await db.execute(select(BotConfig).where(BotConfig.id == 1))
         if not result.scalar_one_or_none():
-            default_config = BotConfig(name="Default Strategy", auto_trade=True)
+            default_config = BotConfig(name="Default Strategy")
             db.add(default_config)
             await db.commit()
         break
