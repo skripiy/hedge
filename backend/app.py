@@ -921,8 +921,21 @@ async def get_live_rates(config_id: int = 1, db: AsyncSession = Depends(get_db))
                 else:
                     spread = 0
                 
+                # Determine effective threshold based on strategy mode
+                strategy_mode = getattr(config, 'strategy_mode', 'hedge')
+                if strategy_mode == 'volume_break_even':
+                    # Calculate break-even threshold
+                    taker_fee = getattr(config, 'taker_fee', 0.05)
+                    slippage = getattr(config, 'slippage', 0.02)
+                    use_maker = getattr(config, 'use_maker_orders', False)
+                    maker_fee = getattr(config, 'maker_fee', 0.02)
+                    fee = maker_fee if use_maker else taker_fee
+                    effective_threshold = (fee * 4) + (slippage * 2)
+                else:
+                    effective_threshold = symbol_config.spread_threshold
+                
                 # Determine if entry opportunity
-                is_opportunity = abs(spread) >= symbol_config.spread_threshold
+                is_opportunity = abs(spread) >= effective_threshold
                 
                 # Get additional market data
                 volume_a = ticker_a.get('quoteVolume', 0) or ticker_a.get('baseVolume', 0) * price_a
@@ -939,7 +952,7 @@ async def get_live_rates(config_id: int = 1, db: AsyncSession = Depends(get_db))
                     "bid_b": ticker_b.get('bid'),
                     "ask_b": ticker_b.get('ask'),
                     "spread": round(spread, 4),
-                    "spread_threshold": symbol_config.spread_threshold,
+                    "spread_threshold": round(effective_threshold, 4),
                     "is_opportunity": is_opportunity,
                     "exchange_a": config.exchange_a,
                     "exchange_b": config.exchange_b,
