@@ -12,11 +12,14 @@ DATABASE_URL = os.getenv(
     "postgresql+asyncpg://user:password@localhost:5432/hedgebot"
 )
 
-# Create async engine
+# Create async engine with larger pool
 engine = create_async_engine(
     DATABASE_URL, 
     echo=os.getenv("DEBUG", "false").lower() == "true",
     pool_pre_ping=True,
+    pool_size=20,
+    max_overflow=30,
+    pool_timeout=60,
 )
 
 # Async session factory
