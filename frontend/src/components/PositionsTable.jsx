@@ -45,6 +45,7 @@ export default function PositionsTable({ positions = [], onClose, loading = fals
                             <th>Current A</th>
                             <th>Current B</th>
                             <th>Size (USDT)</th>
+                            <th>Duration</th>
                             <th>PnL</th>
                             <th>Actions</th>
                         </tr>
@@ -75,6 +76,21 @@ function PositionRow({ position, onClose }) {
         return `${sign}$${value.toFixed(2)}`;
     };
 
+    // Calculate duration
+    const formatDuration = (openTime) => {
+        if (!openTime) return '-';
+        const now = new Date();
+        const opened = new Date(openTime);
+        const diffMs = now - opened;
+        const diffMins = Math.floor(diffMs / 60000);
+        const hours = Math.floor(diffMins / 60);
+        const mins = diffMins % 60;
+        if (hours > 0) return `${hours}h ${mins}m`;
+        return `${mins}m`;
+    };
+
+    const duration = formatDuration(position.open_time);
+
     return (
         <tr>
             <td>
@@ -91,6 +107,9 @@ function PositionRow({ position, onClose }) {
             <td>${formatPrice(position.current_price_a)}</td>
             <td>${formatPrice(position.current_price_b)}</td>
             <td>${position.amount_usdt?.toFixed(2) || '0.00'}</td>
+            <td>
+                <span style={{ color: 'var(--text-muted)' }}>{duration}</span>
+            </td>
             <td>
                 <span className={`stat-value ${pnlClass}`} style={{ fontSize: '0.875rem' }}>
                     {formatPnl(pnl)}

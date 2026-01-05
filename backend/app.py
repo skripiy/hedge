@@ -305,13 +305,7 @@ async def get_status(config_id: int = 1, db: AsyncSession = Depends(get_db)):
 
 @app.get("/positions", response_model=List[PositionSummary], tags=["Positions"])
 async def get_positions(config_id: int = 1, db: AsyncSession = Depends(get_db)):
-    """Get all open positions with live market prices"""
-    import ccxt.async_support as ccxt
-    
-    # Get config for exchange info
-    config_result = await db.execute(select(BotConfig).where(BotConfig.id == config_id))
-    config = config_result.scalar_one_or_none()
-    
+    """Get all open positions (fast - no live price fetching)"""
     result = await db.execute(
         select(Trade).where(
             and_(Trade.config_id == config_id, Trade.status == TradeStatus.OPEN)
@@ -323,41 +317,12 @@ async def get_positions(config_id: int = 1, db: AsyncSession = Depends(get_db)):
         return []
     
     positions = []
-    
-    # Fetch live prices for all symbols
-    live_prices = {}
-    if config:
-        try:
-            ex_a_class = getattr(ccxt, config.exchange_a.lower())
-            ex_b_class = getattr(ccxt, config.exchange_b.lower())
-            ex_a = ex_a_class({'enableRateLimit': True})
-            ex_b = ex_b_class({'enableRateLimit': True})
-            
-            symbols_to_fetch = list(set(t.symbol for t in trades))
-            
-            for symbol in symbols_to_fetch:
-                try:
-                    ticker_a = await ex_a.fetch_ticker(symbol)
-                    ticker_b = await ex_b.fetch_ticker(symbol)
-                    live_prices[symbol] = {
-                        'price_a': ticker_a.get('last', 0),
-                        'price_b': ticker_b.get('last', 0)
-                    }
-                except Exception:
-                    pass
-            
-            await ex_a.close()
-            await ex_b.close()
-        except Exception:
-            pass
-    
     for trade in trades:
-        # Use live prices if available, otherwise fall back to stored
-        prices = live_prices.get(trade.symbol, {})
-        current_price_a = prices.get('price_a') or trade.current_price_a or trade.entry_price_a
-        current_price_b = prices.get('price_b') or trade.current_price_b or trade.entry_price_b
+        # Use stored prices (updated by bot periodically)
+        current_price_a = trade.current_price_a or trade.entry_price_a
+        current_price_b = trade.current_price_b or trade.entry_price_b
         
-        # Calculate real-time PnL
+        # Calculate PnL from stored values
         pnl_a = (current_price_a - trade.entry_price_a) * trade.entry_amount if trade.entry_amount else 0
         pnl_b = (trade.entry_price_b - current_price_b) * trade.entry_amount if trade.entry_amount else 0
         total_pnl = pnl_a + pnl_b - (trade.fees_paid or 0)

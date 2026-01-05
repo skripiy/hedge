@@ -125,7 +125,7 @@ class VolumeStrategy:
         target_profit = self.config.target_profit_percent
         emergency_sl = -self.config.emergency_stop_loss_percent
         
-        # 1. Emergency stop-loss - always close
+        # 1. Emergency stop-loss - always close immediately
         if current_pnl_percent <= emergency_sl:
             return CloseDecision.EMERGENCY_STOP_LOSS, f"PnL {current_pnl_percent:.4f}% <= {emergency_sl}%"
         
@@ -133,22 +133,23 @@ class VolumeStrategy:
         if elapsed_time >= max_hold:
             return CloseDecision.MAX_HOLD_TIME, f"Max hold time {self.config.max_hold_time_minutes}m exceeded"
         
-        # 3. Early profit take (before min hold time)
-        if current_pnl_percent >= target_profit and elapsed_time < min_hold:
-            return CloseDecision.EARLY_PROFIT, f"Early profit {current_pnl_percent:.4f}% >= target {target_profit}%"
+        # 3. WAIT for min_hold_time before considering any exit (except emergency SL)
+        if elapsed_time < min_hold:
+            remaining = min_hold - elapsed_time
+            mins_left = int(remaining.total_seconds() / 60)
+            return CloseDecision.HOLD, f"Hold time: {mins_left}m remaining until min hold"
         
-        # 4. Normal close: time reached AND profitable
-        if elapsed_time >= min_hold:
-            if self.config.close_only_if_profitable:
-                if current_pnl_percent >= min_profit:
-                    return CloseDecision.PROFITABLE_CLOSE, f"Time {elapsed_time} >= {min_hold} AND profit {current_pnl_percent:.4f}% >= {min_profit}%"
-                else:
-                    return CloseDecision.HOLD, f"Time reached but PnL {current_pnl_percent:.4f}% < {min_profit}% - waiting for profit"
+        # 4. After min_hold_time reached - check if profitable
+        if self.config.close_only_if_profitable:
+            if current_pnl_percent >= min_profit:
+                return CloseDecision.PROFITABLE_CLOSE, f"Min hold reached, profit {current_pnl_percent:.4f}% >= {min_profit}%"
             else:
-                return CloseDecision.PROFITABLE_CLOSE, f"Time {elapsed_time} >= {min_hold}"
+                return CloseDecision.HOLD, f"Min hold reached but PnL {current_pnl_percent:.4f}% < {min_profit}% - waiting"
+        else:
+            return CloseDecision.PROFITABLE_CLOSE, f"Hold time {elapsed_time} >= {min_hold}, closing"
         
-        # 5. Keep holding
-        return CloseDecision.HOLD, f"Holding - time {elapsed_time} < {min_hold}"
+        # 5. Keep holding (fallback)
+        return CloseDecision.HOLD, f"Holding - waiting for conditions"
     
     def calculate_volume_generated(
         self,
