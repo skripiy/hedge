@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Save, RefreshCw, Eye, EyeOff } from 'lucide-react';
+import { Save, RefreshCw, Eye, EyeOff, Zap, Shield } from 'lucide-react';
 import * as api from '../api';
 
 export default function Settings() {
@@ -9,23 +9,24 @@ export default function Settings() {
     const [showSecrets, setShowSecrets] = useState(false);
     const [message, setMessage] = useState(null);
 
-    // Form state
+    // Form state - cleaned up for Volume Farming
     const [formData, setFormData] = useState({
         name: '',
         mode: 'simulation',
         virtual_balance: 10000,
         exchange_a: 'binance',
         exchange_b: 'bybit',
-        symbol: 'BTC/USDT',
-        leverage: 1,
-        position_size_usdt: 100,
-        stop_loss_percent: 2,
-        take_profit_percent: 5,
-        spread_threshold: 0.5,
+        // Volume Farming settings
+        strategy_mode: 'volume_break_even',
+        min_hold_time_minutes: 60,
+        max_hold_time_minutes: 480,
+        use_maker_orders: false,
+        // Fees (for break-even calculation)
         max_daily_loss: 500,
-        taker_fee: 0.1,
-        maker_fee: 0.05,
-        slippage: 0.05,
+        taker_fee: 0.05,
+        maker_fee: 0.02,
+        slippage: 0.02,
+        // API Keys
         api_key_a: '',
         api_secret_a: '',
         api_key_b: '',
@@ -47,16 +48,14 @@ export default function Settings() {
                 virtual_balance: data.virtual_balance || 10000,
                 exchange_a: data.exchange_a || 'binance',
                 exchange_b: data.exchange_b || 'bybit',
-                symbol: data.symbol || 'BTC/USDT',
-                leverage: data.leverage || 1,
-                position_size_usdt: data.position_size_usdt || 100,
-                stop_loss_percent: data.stop_loss_percent || 2,
-                take_profit_percent: data.take_profit_percent || 5,
-                spread_threshold: data.spread_threshold || 0.5,
+                strategy_mode: data.strategy_mode || 'volume_break_even',
+                min_hold_time_minutes: data.min_hold_time_minutes || 60,
+                max_hold_time_minutes: data.max_hold_time_minutes || 480,
+                use_maker_orders: data.use_maker_orders || false,
                 max_daily_loss: data.max_daily_loss || 500,
-                taker_fee: data.taker_fee || 0.1,
-                maker_fee: data.maker_fee || 0.05,
-                slippage: data.slippage || 0.05,
+                taker_fee: data.taker_fee || 0.05,
+                maker_fee: data.maker_fee || 0.02,
+                slippage: data.slippage || 0.02,
                 api_key_a: '',
                 api_secret_a: '',
                 api_key_b: '',
@@ -70,10 +69,11 @@ export default function Settings() {
     };
 
     const handleChange = (e) => {
-        const { name, value, type } = e.target;
+        const { name, value, type, checked } = e.target;
         setFormData(prev => ({
             ...prev,
-            [name]: type === 'number' ? parseFloat(value) || 0 : value
+            [name]: type === 'checkbox' ? checked :
+                type === 'number' ? parseFloat(value) || 0 : value
         }));
     };
 
@@ -99,6 +99,11 @@ export default function Settings() {
             setSaving(false);
         }
     };
+
+    // Calculate break-even threshold for display
+    const breakEvenThreshold = formData.use_maker_orders
+        ? (formData.maker_fee * 4) + (formData.slippage * 2)
+        : (formData.taker_fee * 4) + (formData.slippage * 2);
 
     if (loading) {
         return (
@@ -176,26 +181,10 @@ export default function Settings() {
                                 onChange={handleChange}
                             />
                         </div>
-                    </div>
-
-                    {/* Trading Parameters */}
-                    <div className="card">
-                        <h3 style={{ marginBottom: '1.5rem' }}>Trading Parameters</h3>
-
-                        <div className="form-group">
-                            <label className="form-label">Symbol</label>
-                            <input
-                                type="text"
-                                name="symbol"
-                                className="form-input"
-                                value={formData.symbol}
-                                onChange={handleChange}
-                            />
-                        </div>
 
                         <div className="grid-2">
                             <div className="form-group">
-                                <label className="form-label">Exchange A (Long)</label>
+                                <label className="form-label">Exchange A</label>
                                 <select
                                     name="exchange_a"
                                     className="form-input form-select"
@@ -208,7 +197,7 @@ export default function Settings() {
                                 </select>
                             </div>
                             <div className="form-group">
-                                <label className="form-label">Exchange B (Short)</label>
+                                <label className="form-label">Exchange B</label>
                                 <select
                                     name="exchange_b"
                                     className="form-input form-select"
@@ -221,83 +210,89 @@ export default function Settings() {
                                 </select>
                             </div>
                         </div>
+                    </div>
+
+                    {/* Volume Farming Strategy */}
+                    <div className="card">
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '1.5rem' }}>
+                            <Zap size={20} style={{ color: 'var(--accent-primary)' }} />
+                            <h3>Volume Farming Strategy</h3>
+                        </div>
+
+                        <div className="form-group">
+                            <label className="form-label">Strategy Mode</label>
+                            <select
+                                name="strategy_mode"
+                                className="form-input form-select"
+                                value={formData.strategy_mode}
+                                onChange={handleChange}
+                            >
+                                <option value="volume_break_even">Volume Farming (Break-Even)</option>
+                                <option value="hedge">Classic Hedge (Spread)</option>
+                            </select>
+                        </div>
 
                         <div className="grid-2">
                             <div className="form-group">
-                                <label className="form-label">Position Size (USDT)</label>
+                                <label className="form-label">Min Hold Time (min)</label>
                                 <input
                                     type="number"
-                                    name="position_size_usdt"
+                                    name="min_hold_time_minutes"
                                     className="form-input"
-                                    value={formData.position_size_usdt}
+                                    min="1"
+                                    value={formData.min_hold_time_minutes}
                                     onChange={handleChange}
                                 />
                             </div>
                             <div className="form-group">
-                                <label className="form-label">Leverage</label>
+                                <label className="form-label">Max Hold Time (min)</label>
                                 <input
                                     type="number"
-                                    name="leverage"
+                                    name="max_hold_time_minutes"
                                     className="form-input"
                                     min="1"
-                                    max="100"
-                                    value={formData.leverage}
+                                    value={formData.max_hold_time_minutes}
                                     onChange={handleChange}
                                 />
                             </div>
                         </div>
 
                         <div className="form-group">
-                            <label className="form-label">Spread Threshold (%)</label>
-                            <input
-                                type="number"
-                                name="spread_threshold"
-                                className="form-input"
-                                step="0.1"
-                                value={formData.spread_threshold}
-                                onChange={handleChange}
-                            />
+                            <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer' }}>
+                                <input
+                                    type="checkbox"
+                                    name="use_maker_orders"
+                                    checked={formData.use_maker_orders}
+                                    onChange={handleChange}
+                                />
+                                Use Maker Orders (lower fees)
+                            </label>
+                        </div>
+
+                        {/* Break-even display */}
+                        <div style={{
+                            background: 'var(--bg-secondary)',
+                            padding: '1rem',
+                            borderRadius: '8px',
+                            marginTop: '1rem'
+                        }}>
+                            <div style={{ fontSize: '0.875rem', color: 'var(--text-muted)', marginBottom: '0.5rem' }}>
+                                Calculated Break-Even Threshold
+                            </div>
+                            <div style={{ fontSize: '1.5rem', fontWeight: 700, color: 'var(--accent-primary)' }}>
+                                {breakEvenThreshold.toFixed(4)}%
+                            </div>
+                            <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: '0.25rem' }}>
+                                Entry only when spread ≥ this value
+                            </div>
                         </div>
                     </div>
 
-                    {/* Risk Management */}
+                    {/* Fees & Risk */}
                     <div className="card">
-                        <h3 style={{ marginBottom: '1.5rem' }}>Risk Management</h3>
-
-                        <div className="grid-2">
-                            <div className="form-group">
-                                <label className="form-label">Stop Loss (%)</label>
-                                <input
-                                    type="number"
-                                    name="stop_loss_percent"
-                                    className="form-input"
-                                    step="0.1"
-                                    value={formData.stop_loss_percent}
-                                    onChange={handleChange}
-                                />
-                            </div>
-                            <div className="form-group">
-                                <label className="form-label">Take Profit (%)</label>
-                                <input
-                                    type="number"
-                                    name="take_profit_percent"
-                                    className="form-input"
-                                    step="0.1"
-                                    value={formData.take_profit_percent}
-                                    onChange={handleChange}
-                                />
-                            </div>
-                        </div>
-
-                        <div className="form-group">
-                            <label className="form-label">Max Daily Loss (USDT)</label>
-                            <input
-                                type="number"
-                                name="max_daily_loss"
-                                className="form-input"
-                                value={formData.max_daily_loss}
-                                onChange={handleChange}
-                            />
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '1.5rem' }}>
+                            <Shield size={20} style={{ color: 'var(--text-muted)' }} />
+                            <h3>Fees & Risk</h3>
                         </div>
 
                         <div className="grid-3">
@@ -334,6 +329,17 @@ export default function Settings() {
                                     onChange={handleChange}
                                 />
                             </div>
+                        </div>
+
+                        <div className="form-group">
+                            <label className="form-label">Max Daily Loss (USDT)</label>
+                            <input
+                                type="number"
+                                name="max_daily_loss"
+                                className="form-input"
+                                value={formData.max_daily_loss}
+                                onChange={handleChange}
+                            />
                         </div>
                     </div>
 

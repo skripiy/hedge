@@ -40,22 +40,18 @@ class ConfigBase(BaseModel):
     
     exchange_a: str = "binance"
     exchange_b: str = "bybit"
-    symbol: str = "BTC/USDT"
     
-    leverage: int = Field(default=1, ge=1, le=100)
-    order_type: OrderType = OrderType.MARKET
-    position_size_usdt: float = Field(default=100.0, gt=0)
-    position_size_percent: Optional[float] = Field(default=None, ge=0, le=100)
-    
-    stop_loss_percent: float = Field(default=2.0, ge=0)
-    take_profit_percent: float = Field(default=5.0, ge=0)
     max_daily_loss: float = Field(default=500.0, ge=0)
     
-    spread_threshold: float = Field(default=0.5, ge=0)
+    taker_fee: float = Field(default=0.05, ge=0)
+    maker_fee: float = Field(default=0.02, ge=0)
+    slippage: float = Field(default=0.02, ge=0)
     
-    taker_fee: float = Field(default=0.1, ge=0)
-    maker_fee: float = Field(default=0.05, ge=0)
-    slippage: float = Field(default=0.05, ge=0)
+    # Volume Farming fields
+    strategy_mode: str = "volume_break_even"
+    min_hold_time_minutes: int = 60
+    max_hold_time_minutes: int = 480
+    use_maker_orders: bool = False
 
 
 class ConfigCreate(ConfigBase):
@@ -71,18 +67,16 @@ class ConfigUpdate(BaseModel):
     virtual_balance: Optional[float] = None
     exchange_a: Optional[str] = None
     exchange_b: Optional[str] = None
-    symbol: Optional[str] = None
-    leverage: Optional[int] = None
-    order_type: Optional[OrderType] = None
-    position_size_usdt: Optional[float] = None
-    position_size_percent: Optional[float] = None
-    stop_loss_percent: Optional[float] = None
-    take_profit_percent: Optional[float] = None
     max_daily_loss: Optional[float] = None
-    spread_threshold: Optional[float] = None
     taker_fee: Optional[float] = None
     maker_fee: Optional[float] = None
     slippage: Optional[float] = None
+    # Volume Farming fields
+    strategy_mode: Optional[str] = None
+    min_hold_time_minutes: Optional[int] = None
+    max_hold_time_minutes: Optional[int] = None
+    use_maker_orders: Optional[bool] = None
+    # API Keys
     api_key_a: Optional[str] = None
     api_secret_a: Optional[str] = None
     api_key_b: Optional[str] = None
