@@ -414,6 +414,20 @@ class HedgeBot:
                                 )
                                 
                                 if decision != CloseDecision.HOLD:
+                                    # Close trade in database
+                                    trade_id = pos.get('trade_id')
+                                    if trade_id:
+                                        await self.db_service.close_trade(
+                                            trade_id=trade_id,
+                                            exit_price_a=price_a,
+                                            exit_price_b=price_b,
+                                            pnl_a=pnl_a,
+                                            pnl_b=pnl_b,
+                                            pnl_net=net_pnl,
+                                            fees_paid=pos.get('fees', 0),
+                                            close_reason=decision.value
+                                        )
+                                    
                                     await self.db_service.log_decision(
                                         config_id=self.config_id,
                                         decision_type="exit",
@@ -423,7 +437,8 @@ class HedgeBot:
                                         spread=round(spread, 4),
                                         action_taken=decision.value,
                                         reason=reason,
-                                        pnl=round(net_pnl, 4)
+                                        pnl=round(net_pnl, 4),
+                                        position_id=trade_id
                                     )
                                     
                                     volume = volume_strategy.calculate_volume_generated(position_size, leverage)
@@ -455,12 +470,29 @@ class HedgeBot:
                             can_open, risk_reason = self.risk_manager.can_open_position(position_size)
                             
                             if can_open:
-                                # Simulate opening position
+                                # Calculate trade params
                                 avg_price = (price_a + price_b) / 2
                                 amount = position_size / avg_price
                                 fees = position_size * (self.config.get('taker_fee', 0.05) / 100) * 2
                                 
+                                # Save trade to database
+                                trade_id = await self.db_service.create_trade_simple(
+                                    config_id=self.config_id,
+                                    symbol=symbol,
+                                    exchange_a=self.ex_a.exchange_id,
+                                    exchange_b=self.ex_b.exchange_id,
+                                    entry_price_a=price_a,
+                                    entry_price_b=price_b,
+                                    amount=amount,
+                                    amount_usdt=position_size,
+                                    leverage=leverage,
+                                    fees=fees,
+                                    mode=self.config.get('mode', 'simulation')
+                                )
+                                
+                                # Track in memory with trade_id
                                 open_positions[symbol] = {
+                                    'trade_id': trade_id,
                                     'open_time': datetime.utcnow(),
                                     'entry_price_a': price_a,
                                     'entry_price_b': price_b,
@@ -478,12 +510,13 @@ class HedgeBot:
                                     price_b=price_b,
                                     spread=round(spread, 4),
                                     action_taken="open_position",
-                                    reason=reason
+                                    reason=reason,
+                                    position_id=trade_id
                                 )
                                 
                                 logger.info(
                                     f"📥 {symbol} ENTRY | Spread: {spread:.4f}% | "
-                                    f"A: ${price_a:.2f} B: ${price_b:.2f}"
+                                    f"A: ${price_a:.2f} B: ${price_b:.2f} | ID: {trade_id[:8]}"
                                 )
                             else:
                                 await self.db_service.log_decision(

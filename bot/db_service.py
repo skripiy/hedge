@@ -215,6 +215,58 @@ class DatabaseService:
             logger.error(f"Error saving trade: {e}")
             return None
     
+    async def create_trade_simple(
+        self,
+        config_id: int,
+        symbol: str,
+        exchange_a: str,
+        exchange_b: str,
+        entry_price_a: float,
+        entry_price_b: float,
+        amount: float,
+        amount_usdt: float,
+        leverage: int = 1,
+        fees: float = 0.0,
+        mode: str = "simulation"
+    ) -> Optional[str]:
+        """Create a new trade with simple params (for Volume Farming mode)"""
+        try:
+            async with self.async_session() as session:
+                from backend.models import Trade, TradingMode, TradeStatus
+                
+                trade_id = str(uuid.uuid4())
+                
+                trade = Trade(
+                    config_id=config_id,
+                    trade_id=trade_id,
+                    status=TradeStatus.OPEN,
+                    mode=TradingMode(mode),
+                    symbol=symbol,
+                    exchange_a=exchange_a,
+                    exchange_b=exchange_b,
+                    entry_price_a=entry_price_a,
+                    entry_price_b=entry_price_b,
+                    entry_amount=amount,
+                    entry_amount_usdt=amount_usdt,
+                    leverage=leverage,
+                    open_time=datetime.utcnow(),
+                    current_price_a=entry_price_a,
+                    current_price_b=entry_price_b,
+                    unrealized_pnl=0.0,
+                    fees_paid=fees,
+                    volume_generated=amount_usdt * 2 * leverage
+                )
+                
+                session.add(trade)
+                await session.commit()
+                
+                logger.info(f"Trade created: {trade_id} for {symbol}")
+                return trade_id
+                
+        except Exception as e:
+            logger.error(f"Error creating trade: {e}")
+            return None
+    
     async def update_trade(
         self,
         trade_id: str,
