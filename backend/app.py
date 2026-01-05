@@ -579,7 +579,7 @@ async def get_equity_curve(
 
 @app.get("/analytics/summary", tags=["Analytics"])
 async def get_analytics_summary(config_id: int = 1, db: AsyncSession = Depends(get_db)):
-    """Get trading summary statistics"""
+    """Get trading summary statistics including volume metrics"""
     # Total trades
     total_result = await db.execute(
         select(func.count(Trade.id)).where(Trade.config_id == config_id)
@@ -606,7 +606,37 @@ async def get_analytics_summary(config_id: int = 1, db: AsyncSession = Depends(g
     )
     total_fees = fees_result.scalar() or 0.0
     
+    # Volume generated (new)
+    volume_result = await db.execute(
+        select(func.sum(Trade.volume_generated)).where(Trade.config_id == config_id)
+    )
+    total_volume = volume_result.scalar() or 0.0
+    
+    # Average hold time in seconds (new)
+    hold_result = await db.execute(
+        select(func.avg(Trade.hold_duration_seconds)).where(
+            and_(Trade.config_id == config_id, Trade.hold_duration_seconds.isnot(None))
+        )
+    )
+    avg_hold_seconds = hold_result.scalar() or 0
+    
+    # Today's volume
+    from datetime import date
+    today = date.today()
+    today_vol_result = await db.execute(
+        select(func.sum(Trade.volume_generated)).where(
+            and_(
+                Trade.config_id == config_id,
+                func.date(Trade.close_time) == today
+            )
+        )
+    )
+    today_volume = today_vol_result.scalar() or 0.0
+    
     win_rate = (winning_trades / total_trades * 100) if total_trades > 0 else 0
+    
+    # Format hold time
+    avg_hold_minutes = round(avg_hold_seconds / 60, 1) if avg_hold_seconds else 0
     
     return {
         "total_trades": total_trades,
@@ -615,7 +645,11 @@ async def get_analytics_summary(config_id: int = 1, db: AsyncSession = Depends(g
         "win_rate": round(win_rate, 2),
         "total_pnl": round(total_pnl, 2),
         "total_fees": round(total_fees, 2),
-        "net_pnl": round(total_pnl - total_fees, 2)
+        "net_pnl": round(total_pnl - total_fees, 2),
+        # Volume Farming metrics
+        "total_volume": round(total_volume, 2),
+        "today_volume": round(today_volume, 2),
+        "avg_hold_minutes": avg_hold_minutes
     }
 
 

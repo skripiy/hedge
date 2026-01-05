@@ -83,6 +83,16 @@ export default function Dashboard() {
     const openPositions = status?.open_positions_count || 0;
     const botStatus = status?.status || 'stopped';
 
+    // Poll analytics for volume metrics every 10 seconds
+    const { data: analytics } = usePolling(
+        useCallback(() => api.getAnalyticsSummary(1), []),
+        10000
+    );
+
+    const todayVolume = analytics?.today_volume || 0;
+    const winRate = analytics?.win_rate || 0;
+    const avgHoldMinutes = analytics?.avg_hold_minutes || 0;
+
     return (
         <div className="animate-in">
             <div className="page-header">
@@ -96,7 +106,7 @@ export default function Dashboard() {
                 </div>
             </div>
 
-            {/* Stats Grid */}
+            {/* Stats Grid - Row 1: Core Metrics */}
             <div className="stats-grid">
                 <StatCard
                     label="Current Balance"
@@ -125,6 +135,32 @@ export default function Dashboard() {
                     value={openPositions}
                     variant={openPositions > 0 ? 'success' : 'default'}
                     loading={statusLoading}
+                />
+            </div>
+
+            {/* Stats Grid - Row 2: Volume Farming Metrics */}
+            <div className="stats-grid" style={{ marginTop: '1rem' }}>
+                <StatCard
+                    label="Today's Volume"
+                    value={todayVolume}
+                    prefix="$"
+                    variant="primary"
+                />
+                <StatCard
+                    label="Win Rate"
+                    value={winRate}
+                    suffix="%"
+                    variant={winRate >= 80 ? 'success' : winRate >= 50 ? 'default' : 'danger'}
+                />
+                <StatCard
+                    label="Avg Hold Time"
+                    value={avgHoldMinutes}
+                    suffix=" min"
+                    variant={avgHoldMinutes >= 60 ? 'success' : 'default'}
+                />
+                <StatCard
+                    label="Total Trades"
+                    value={analytics?.total_trades || 0}
                 />
             </div>
 
