@@ -418,7 +418,7 @@ async def get_config(config_id: int = 1, db: AsyncSession = Depends(get_db)):
     if not config:
         raise HTTPException(status_code=404, detail="Config not found")
     
-    # Convert to response with hidden API keys
+    # Convert to response with hidden API keys - use getattr for optional fields
     response = ConfigResponse(
         id=config.id,
         name=config.name,
@@ -428,22 +428,22 @@ async def get_config(config_id: int = 1, db: AsyncSession = Depends(get_db)):
         current_balance=config.current_balance,
         exchange_a=config.exchange_a,
         exchange_b=config.exchange_b,
-        symbol=config.symbol,
-        leverage=config.leverage,
-        order_type=config.order_type,
-        position_size_usdt=config.position_size_usdt,
-        position_size_percent=config.position_size_percent,
-        stop_loss_percent=config.stop_loss_percent,
-        take_profit_percent=config.take_profit_percent,
+        symbol=getattr(config, 'symbol', 'BTC/USDT'),
+        leverage=getattr(config, 'leverage', 1),
+        order_type=getattr(config, 'order_type', 'market'),
+        position_size_usdt=getattr(config, 'position_size_usdt', 100.0),
+        position_size_percent=getattr(config, 'position_size_percent', None),
+        stop_loss_percent=getattr(config, 'stop_loss_percent', 2.0),
+        take_profit_percent=getattr(config, 'take_profit_percent', 5.0),
         max_daily_loss=config.max_daily_loss,
-        spread_threshold=config.spread_threshold,
+        spread_threshold=getattr(config, 'spread_threshold', 0.5),
         taker_fee=config.taker_fee,
         maker_fee=config.maker_fee,
         slippage=config.slippage,
         created_at=config.created_at,
         updated_at=config.updated_at,
-        has_api_keys_a=bool(config.api_key_a and config.api_secret_a),
-        has_api_keys_b=bool(config.api_key_b and config.api_secret_b)
+        has_api_keys_a=bool(getattr(config, 'api_key_a', None) and getattr(config, 'api_secret_a', None)),
+        has_api_keys_b=bool(getattr(config, 'api_key_b', None) and getattr(config, 'api_secret_b', None))
     )
     
     return response
