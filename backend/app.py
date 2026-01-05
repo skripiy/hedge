@@ -664,18 +664,35 @@ async def get_analytics_summary(config_id: int = 1, db: AsyncSession = Depends(g
     )
     avg_hold_seconds = hold_result.scalar() or 0
     
-    # Today's volume
+    # Today's volume (include open trades)
     from datetime import date
     today = date.today()
     today_vol_result = await db.execute(
         select(func.sum(Trade.volume_generated)).where(
             and_(
                 Trade.config_id == config_id,
-                func.date(Trade.close_time) == today
+                func.date(Trade.open_time) == today
             )
         )
     )
     today_volume = today_vol_result.scalar() or 0.0
+    
+    # Open positions count
+    open_result = await db.execute(
+        select(func.count(Trade.id)).where(
+            and_(Trade.config_id == config_id, Trade.status == TradeStatus.OPEN)
+        )
+    )
+    open_positions = open_result.scalar() or 0
+    
+    # Unrealized PnL for open positions (sum of volume_generated for open trades as proxy)
+    # Real unrealized PnL requires live prices, so we estimate from volume
+    unrealized_result = await db.execute(
+        select(func.sum(Trade.unrealized_pnl)).where(
+            and_(Trade.config_id == config_id, Trade.status == TradeStatus.OPEN)
+        )
+    )
+    unrealized_pnl = unrealized_result.scalar() or 0.0
     
     win_rate = (winning_trades / total_trades * 100) if total_trades > 0 else 0
     
@@ -693,7 +710,10 @@ async def get_analytics_summary(config_id: int = 1, db: AsyncSession = Depends(g
         # Volume Farming metrics
         "total_volume": round(total_volume, 2),
         "today_volume": round(today_volume, 2),
-        "avg_hold_minutes": avg_hold_minutes
+        "avg_hold_minutes": avg_hold_minutes,
+        # Open positions
+        "open_positions": open_positions,
+        "unrealized_pnl": round(unrealized_pnl, 2)
     }
 
 

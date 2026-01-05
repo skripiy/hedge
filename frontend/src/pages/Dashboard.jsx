@@ -78,9 +78,6 @@ export default function Dashboard() {
 
     // Calculate display values
     const currentBalance = status?.current_balance || 10000;
-    const unrealizedPnl = status?.unrealized_pnl || 0;
-    const todayPnl = status?.total_pnl_today || 0;
-    const openPositions = status?.open_positions_count || 0;
     const botStatus = status?.status || 'stopped';
 
     // Poll analytics for volume metrics every 10 seconds
@@ -89,9 +86,14 @@ export default function Dashboard() {
         10000
     );
 
+    // Use analytics for all metrics
     const todayVolume = analytics?.today_volume || 0;
     const winRate = analytics?.win_rate || 0;
     const avgHoldMinutes = analytics?.avg_hold_minutes || 0;
+    const openPositions = analytics?.open_positions || positions?.length || 0;
+    const unrealizedPnl = analytics?.unrealized_pnl || 0;
+    const todayPnl = analytics?.total_pnl || 0;
+    const totalTrades = analytics?.total_trades || 0;
 
     return (
         <div className="animate-in">
@@ -160,7 +162,7 @@ export default function Dashboard() {
                 />
                 <StatCard
                     label="Total Trades"
-                    value={analytics?.total_trades || 0}
+                    value={totalTrades}
                 />
             </div>
 
