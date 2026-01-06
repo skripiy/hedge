@@ -294,7 +294,13 @@ async def get_status(config_id: int = 1, db: AsyncSession = Depends(get_db)):
         total_pnl_today=total_pnl_today,
         open_positions_count=open_positions_count,
         uptime_seconds=uptime,
-        last_activity=None,  # TODO: track last activity
+        last_activity=None,
+        # Per-exchange info (split balance 50/50 for simulation)
+        exchange_a=config.exchange_a or "binance",
+        exchange_b=config.exchange_b or "bybit",
+        balance_a=config.current_balance / 2,
+        balance_b=config.current_balance / 2,
+        # Connection status
         exchange_a_connected=config.status == BotStatus.RUNNING,
         exchange_b_connected=config.status == BotStatus.RUNNING,
         database_connected=True

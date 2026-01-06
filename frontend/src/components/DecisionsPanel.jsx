@@ -6,7 +6,7 @@ import * as api from '../api';
 export default function DecisionsPanel({ configId = 1, symbol = null, limit = 30 }) {
     const { data: decisions, loading } = usePolling(
         useCallback(() => api.getDecisions({ configId, symbol, limit }), [configId, symbol, limit]),
-        3000 // Update every 3 seconds
+        2000 // Update every 2 seconds for faster feedback
     );
 
     if (loading && !decisions) {

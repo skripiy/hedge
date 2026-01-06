@@ -160,6 +160,12 @@ class BotStatusResponse(BaseModel):
     uptime_seconds: Optional[int] = None
     last_activity: Optional[datetime] = None
     
+    # Per-exchange info
+    exchange_a: str = "binance"
+    exchange_b: str = "bybit"
+    balance_a: float = 0.0
+    balance_b: float = 0.0
+    
     # Connection status
     exchange_a_connected: bool = False
     exchange_b_connected: bool = False
