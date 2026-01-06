@@ -73,7 +73,7 @@ class EtherealExchange(BaseExchange):
             session = await self._get_session()
             
             # Fetch available markets
-            async with session.get(f"{self.base_url}/v1/products") as resp:
+            async with session.get(f"{self.base_url}/v1/product") as resp:
                 if resp.status == 200:
                     data = await resp.json()
                     self._markets = {p['symbol']: p for p in data.get('products', [])}

@@ -726,7 +726,7 @@ async def get_available_symbols(
         elif exchange.lower() == 'ethereal':
             # Ethereal Trade - fetch from API
             async with aiohttp.ClientSession() as session:
-                async with session.get("https://api.ethereal.trade/v1/products") as resp:
+                async with session.get("https://api.ethereal.trade/v1/product") as resp:
                     if resp.status == 200:
                         data = await resp.json()
                         symbols = [p.get('symbol', '') for p in data.get('products', [])]
@@ -809,7 +809,7 @@ async def get_markets(config_id: int = 1, db: AsyncSession = Depends(get_db)):
             elif exchange.lower() == 'ethereal':
                 logger.info(f"Fetching from Ethereal API...")
                 async with aiohttp.ClientSession() as session:
-                    async with session.get("https://api.ethereal.trade/v1/products", timeout=aiohttp.ClientTimeout(total=10)) as resp:
+                    async with session.get("https://api.ethereal.trade/v1/product", timeout=aiohttp.ClientTimeout(total=10)) as resp:
                         logger.info(f"Ethereal response: {resp.status}")
                         if resp.status == 200:
                             data = await resp.json()
