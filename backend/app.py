@@ -809,23 +809,29 @@ async def get_markets(config_id: int = 1, db: AsyncSession = Depends(get_db)):
             elif exchange.lower() == 'ethereal':
                 logger.info(f"Fetching from Ethereal API...")
                 async with aiohttp.ClientSession() as session:
+                    # Get products first
                     async with session.get("https://api.ethereal.trade/v1/product", timeout=aiohttp.ClientTimeout(total=10)) as resp:
-                        logger.info(f"Ethereal response: {resp.status}")
+                        logger.info(f"Ethereal products response: {resp.status}")
                         if resp.status == 200:
                             data = await resp.json()
-                            products = data.get('products', []) if isinstance(data, dict) else data
-                            symbols = [
-                                {
-                                    'symbol': p.get('symbol', '') if isinstance(p, dict) else str(p),
-                                    'base': (p.get('symbol', '') if isinstance(p, dict) else str(p)).replace('USD', ''),
-                                    'quote': 'USD',
-                                    'type': 'perp',
-                                    'last': 0,
-                                    'volume_24h': 0,
-                                }
-                                for p in products
-                            ]
-                            logger.info(f"Ethereal: found {len(symbols)} pairs")
+                            products = data if isinstance(data, list) else data.get('products', []) if isinstance(data, dict) else []
+                            
+                            symbols = []
+                            for p in products:
+                                if isinstance(p, dict):
+                                    ticker = p.get('ticker', p.get('symbol', ''))
+                                    mark_price = float(p.get('markPrice', 0) or p.get('lastPrice', 0) or 0)
+                                    symbols.append({
+                                        'symbol': ticker,
+                                        'base': ticker.replace('USD', '').replace('-', ''),
+                                        'quote': 'USD',
+                                        'type': 'perp',
+                                        'last': mark_price,
+                                        'price': mark_price,
+                                        'volume_24h': float(p.get('volume24h', 0) or 0),
+                                        'change_24h': float(p.get('priceChange24h', 0) or 0),
+                                    })
+                            logger.info(f"Ethereal: found {len(symbols)} pairs with prices")
                             return symbols
                         else:
                             text = await resp.text()
@@ -835,25 +841,29 @@ async def get_markets(config_id: int = 1, db: AsyncSession = Depends(get_db)):
             elif exchange.lower() == 'backpack':
                 logger.info(f"Fetching from Backpack API...")
                 async with aiohttp.ClientSession() as session:
-                    async with session.get("https://api.backpack.exchange/api/v1/markets", timeout=aiohttp.ClientTimeout(total=10)) as resp:
-                        logger.info(f"Backpack response: {resp.status}")
+                    # Get tickers for real prices
+                    async with session.get("https://api.backpack.exchange/api/v1/tickers", timeout=aiohttp.ClientTimeout(total=15)) as resp:
+                        logger.info(f"Backpack tickers response: {resp.status}")
                         if resp.status == 200:
                             data = await resp.json()
-                            symbols = [
-                                {
-                                    'symbol': m.get('symbol', ''),
-                                    'base': m.get('baseSymbol', m.get('symbol', '').split('_')[0]),
-                                    'quote': m.get('quoteSymbol', 'USD'),
-                                    'type': 'perp' if 'PERP' in m.get('symbol', '') else 'spot',
+                            symbols = []
+                            for m in data:
+                                symbol = m.get('symbol', '')
+                                is_perp = 'PERP' in symbol
+                                symbols.append({
+                                    'symbol': symbol,
+                                    'base': symbol.split('_')[0] if '_' in symbol else symbol,
+                                    'quote': 'USDC' if 'USDC' in symbol else 'USD',
+                                    'type': 'perp' if is_perp else 'spot',
                                     'last': float(m.get('lastPrice', 0) or 0),
-                                    'volume_24h': float(m.get('volume', 0) or 0),
-                                }
-                                for m in data
-                            ]
+                                    'price': float(m.get('lastPrice', 0) or 0),
+                                    'volume_24h': float(m.get('quoteVolume', 0) or m.get('volume', 0) or 0),
+                                    'change_24h': float(m.get('priceChange', 0) or 0),
+                                })
                             # Filter to perps only
                             perps = [s for s in symbols if s['type'] == 'perp']
-                            logger.info(f"Backpack: found {len(perps)} perp pairs (total {len(symbols)})")
-                            return perps if perps else symbols[:50]  # Return spot if no perps
+                            logger.info(f"Backpack: found {len(perps)} perp pairs with prices (total {len(symbols)})")
+                            return perps if perps else symbols[:50]
                         else:
                             text = await resp.text()
                             logger.error(f"Backpack error: {resp.status} - {text[:200]}")
