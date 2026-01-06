@@ -766,6 +766,9 @@ async def get_rates(config_id: int = 1, db: AsyncSession = Depends(get_db)):
     Returns spread, prices, and signals.
     """
     import aiohttp
+    import sys
+    sys.path.insert(0, '/app')
+    from bot.symbol_mapper import extract_base, get_symbol_for_exchange
     
     # Get config
     result = await db.execute(select(BotConfig).where(BotConfig.id == config_id))
@@ -793,23 +796,109 @@ async def get_rates(config_id: int = 1, db: AsyncSession = Depends(get_db)):
     exchange_a = config.exchange_a or "binance"
     exchange_b = config.exchange_b or "bybit"
     
+    # Cache for ticker data
+    ticker_cache = {}
+    
+    async def fetch_ticker(exchange: str, symbol: str) -> dict:
+        """Fetch ticker data for a symbol from an exchange"""
+        cache_key = f"{exchange}:{symbol}"
+        if cache_key in ticker_cache:
+            return ticker_cache[cache_key]
+        
+        try:
+            if exchange.lower() in ['binance', 'bybit', 'okx']:
+                import ccxt.async_support as ccxt
+                ex_class = getattr(ccxt, exchange.lower())
+                ex = ex_class({'enableRateLimit': True, 'options': {'defaultType': 'future'}})
+                try:
+                    ticker = await ex.fetch_ticker(symbol)
+                    result = {
+                        'last': float(ticker.get('last', 0) or 0),
+                        'bid': float(ticker.get('bid', 0) or 0),
+                        'ask': float(ticker.get('ask', 0) or 0),
+                        'volume': float(ticker.get('quoteVolume', 0) or 0),
+                    }
+                    ticker_cache[cache_key] = result
+                    return result
+                finally:
+                    await ex.close()
+                    
+            elif exchange.lower() == 'backpack':
+                async with aiohttp.ClientSession() as session:
+                    url = f"https://api.backpack.exchange/api/v1/ticker?symbol={symbol}"
+                    async with session.get(url, timeout=aiohttp.ClientTimeout(total=5)) as resp:
+                        if resp.status == 200:
+                            data = await resp.json()
+                            result = {
+                                'last': float(data.get('lastPrice', 0) or 0),
+                                'bid': float(data.get('bidPrice', 0) or 0),
+                                'ask': float(data.get('askPrice', 0) or 0),
+                                'volume': float(data.get('quoteVolume', 0) or 0),
+                            }
+                            ticker_cache[cache_key] = result
+                            return result
+                            
+            elif exchange.lower() == 'ethereal':
+                async with aiohttp.ClientSession() as session:
+                    url = f"https://tradingview.ethereal.trade/v1/last-price?symbol={symbol}"
+                    async with session.get(url, timeout=aiohttp.ClientTimeout(total=5)) as resp:
+                        if resp.status == 200:
+                            data = await resp.json()
+                            price = float(data.get('price', 0) or data.get('last', 0) or 0)
+                            result = {
+                                'last': price,
+                                'bid': price * 0.999,
+                                'ask': price * 1.001,
+                                'volume': 0,
+                            }
+                            ticker_cache[cache_key] = result
+                            return result
+                            
+        except Exception as e:
+            logger.error(f"Error fetching ticker {symbol} from {exchange}: {e}")
+        
+        return {'last': 0, 'bid': 0, 'ask': 0, 'volume': 0}
+    
     rates = []
     
     # For each symbol, fetch prices from both exchanges
     for sym in symbols:
         symbol = sym.symbol
+        base = extract_base(symbol)
         
-        # Simple placeholder rates for now
-        # In production, this would call the exchange connectors
+        # Get correct symbol format for each exchange
+        symbol_a = get_symbol_for_exchange(base, exchange_a)
+        symbol_b = get_symbol_for_exchange(base, exchange_b)
+        
+        # Fetch tickers
+        ticker_a = await fetch_ticker(exchange_a, symbol_a) if symbol_a else {'last': 0}
+        ticker_b = await fetch_ticker(exchange_b, symbol_b) if symbol_b else {'last': 0}
+        
+        price_a = ticker_a.get('last', 0)
+        price_b = ticker_b.get('last', 0)
+        
+        # Calculate spread
+        if price_a > 0 and price_b > 0:
+            spread = abs(price_a - price_b)
+            spread_pct = (spread / min(price_a, price_b)) * 100
+            signal = "LONG A" if price_a < price_b else "LONG B" if price_b < price_a else "NEUTRAL"
+        else:
+            spread = 0
+            spread_pct = 0
+            signal = "NO DATA"
+        
         rate = {
             "symbol": symbol,
+            "base": base,
+            "symbol_a": symbol_a,
+            "symbol_b": symbol_b,
             "enabled": sym.enabled,
-            "price_a": 0,
-            "price_b": 0,
-            "spread": 0,
-            "spread_pct": 0,
-            "volume_24h": 0,
-            "signal": "NEUTRAL"
+            "price_a": price_a,
+            "price_b": price_b,
+            "spread": spread,
+            "spread_pct": round(spread_pct, 4),
+            "volume_24h": ticker_a.get('volume', 0) + ticker_b.get('volume', 0),
+            "signal": signal
         }
         rates.append(rate)
     
