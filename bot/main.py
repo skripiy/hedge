@@ -56,7 +56,7 @@ class HedgeBot:
     
     async def setup(self):
         """Initialize all components"""
-        from bot.exchange import ExchangeManager
+        from bot.exchanges import create_exchange
         from bot.strategy import Strategy
         from bot.risk_manager import RiskManager, RiskLimits
         from bot.db_service import DatabaseService
@@ -93,25 +93,27 @@ class HedgeBot:
         is_simulation = self.config.get('mode') == 'simulation'
         
         # Initialize Exchange A (Long side)
-        self.ex_a = ExchangeManager(
+        self.ex_a = create_exchange(
             exchange_id=self.config.get('exchange_a', 'binance'),
             api_key=self.config.get('api_key_a') if not is_simulation else None,
             secret=self.config.get('api_secret_a') if not is_simulation else None,
+            private_key=self.config.get('ethereal_private_key') if not is_simulation else None,
             simulation_mode=is_simulation,
-            taker_fee=self.config.get('taker_fee', 0.1),
-            maker_fee=self.config.get('maker_fee', 0.05),
-            slippage=self.config.get('slippage', 0.05)
+            taker_fee=self.config.get('taker_fee', 0.05),
+            maker_fee=self.config.get('maker_fee', 0.02),
+            slippage=self.config.get('slippage', 0.02)
         )
         
         # Initialize Exchange B (Short side)
-        self.ex_b = ExchangeManager(
+        self.ex_b = create_exchange(
             exchange_id=self.config.get('exchange_b', 'bybit'),
             api_key=self.config.get('api_key_b') if not is_simulation else None,
             secret=self.config.get('api_secret_b') if not is_simulation else None,
+            private_key=self.config.get('ethereal_private_key') if not is_simulation else None,
             simulation_mode=is_simulation,
-            taker_fee=self.config.get('taker_fee', 0.1),
-            maker_fee=self.config.get('maker_fee', 0.05),
-            slippage=self.config.get('slippage', 0.05)
+            taker_fee=self.config.get('taker_fee', 0.05),
+            maker_fee=self.config.get('maker_fee', 0.02),
+            slippage=self.config.get('slippage', 0.02)
         )
         
         # Connect to exchanges
