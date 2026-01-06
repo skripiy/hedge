@@ -769,10 +769,13 @@ async def get_markets(config_id: int = 1, db: AsyncSession = Depends(get_db)):
     config = result.scalar_one_or_none()
     
     if not config:
+        logger.error("Config not found")
         return {"markets": [], "error": "Config not found"}
     
     exchange_a = config.exchange_a or "binance"
     exchange_b = config.exchange_b or "bybit"
+    
+    logger.info(f"Fetching markets for: {exchange_a} + {exchange_b}")
     
     async def fetch_symbols(exchange: str) -> list:
         """Fetch symbols from an exchange"""
@@ -783,54 +786,77 @@ async def get_markets(config_id: int = 1, db: AsyncSession = Depends(get_db)):
                 ex = exchange_class({'enableRateLimit': True, 'options': {'defaultType': 'future'}})
                 try:
                     markets = await ex.load_markets()
-                    return [
+                    symbols = [
                         {
                             'symbol': sym,
                             'base': markets[sym].get('base', ''),
                             'quote': markets[sym].get('quote', ''),
                             'type': 'future',
-                            'last': markets[sym].get('info', {}).get('lastPrice', 0),
+                            'last': float(markets[sym].get('info', {}).get('lastPrice', 0) or 0),
                             'volume_24h': float(markets[sym].get('info', {}).get('volume', 0) or 0),
                         }
                         for sym in markets.keys()
                         if ':' in sym  # Futures have ':' in symbol
                     ]
+                    logger.info(f"{exchange}: found {len(symbols)} futures pairs")
+                    return symbols
                 finally:
                     await ex.close()
+                    
             elif exchange.lower() == 'ethereal':
+                logger.info(f"Fetching from Ethereal API...")
                 async with aiohttp.ClientSession() as session:
-                    async with session.get("https://api.ethereal.trade/v1/products") as resp:
+                    async with session.get("https://api.ethereal.trade/v1/products", timeout=aiohttp.ClientTimeout(total=10)) as resp:
+                        logger.info(f"Ethereal response: {resp.status}")
                         if resp.status == 200:
                             data = await resp.json()
-                            return [
+                            products = data.get('products', []) if isinstance(data, dict) else data
+                            symbols = [
                                 {
-                                    'symbol': p.get('symbol', ''),
-                                    'base': p.get('symbol', '').replace('USD', ''),
+                                    'symbol': p.get('symbol', '') if isinstance(p, dict) else str(p),
+                                    'base': (p.get('symbol', '') if isinstance(p, dict) else str(p)).replace('USD', ''),
                                     'quote': 'USD',
                                     'type': 'perp',
                                     'last': 0,
                                     'volume_24h': 0,
                                 }
-                                for p in data.get('products', [])
+                                for p in products
                             ]
+                            logger.info(f"Ethereal: found {len(symbols)} pairs")
+                            return symbols
+                        else:
+                            text = await resp.text()
+                            logger.error(f"Ethereal error: {resp.status} - {text[:200]}")
                 return []
+                
             elif exchange.lower() == 'backpack':
+                logger.info(f"Fetching from Backpack API...")
                 async with aiohttp.ClientSession() as session:
-                    async with session.get("https://api.backpack.exchange/api/v1/markets") as resp:
+                    async with session.get("https://api.backpack.exchange/api/v1/markets", timeout=aiohttp.ClientTimeout(total=10)) as resp:
+                        logger.info(f"Backpack response: {resp.status}")
                         if resp.status == 200:
                             data = await resp.json()
-                            return [
+                            symbols = [
                                 {
                                     'symbol': m.get('symbol', ''),
-                                    'base': m.get('baseSymbol', ''),
-                                    'quote': m.get('quoteSymbol', ''),
+                                    'base': m.get('baseSymbol', m.get('symbol', '').split('_')[0]),
+                                    'quote': m.get('quoteSymbol', 'USD'),
                                     'type': 'perp' if 'PERP' in m.get('symbol', '') else 'spot',
                                     'last': float(m.get('lastPrice', 0) or 0),
                                     'volume_24h': float(m.get('volume', 0) or 0),
                                 }
                                 for m in data
-                                if 'PERP' in m.get('symbol', '')
                             ]
+                            # Filter to perps only
+                            perps = [s for s in symbols if s['type'] == 'perp']
+                            logger.info(f"Backpack: found {len(perps)} perp pairs (total {len(symbols)})")
+                            return perps if perps else symbols[:50]  # Return spot if no perps
+                        else:
+                            text = await resp.text()
+                            logger.error(f"Backpack error: {resp.status} - {text[:200]}")
+                return []
+            else:
+                logger.warning(f"Unknown exchange: {exchange}")
                 return []
         except Exception as e:
             logger.error(f"Error fetching from {exchange}: {e}")
@@ -840,13 +866,42 @@ async def get_markets(config_id: int = 1, db: AsyncSession = Depends(get_db)):
     symbols_a = await fetch_symbols(exchange_a)
     symbols_b = await fetch_symbols(exchange_b)
     
+    logger.info(f"Exchange A ({exchange_a}): {len(symbols_a)} symbols")
+    logger.info(f"Exchange B ({exchange_b}): {len(symbols_b)} symbols")
+    
+    # If one exchange has no results, just show the other
+    if not symbols_a and symbols_b:
+        return {
+            "exchange_a": exchange_a,
+            "exchange_b": exchange_b,
+            "total_a": 0,
+            "total_b": len(symbols_b),
+            "count": len(symbols_b),
+            "markets": symbols_b[:100]
+        }
+    elif symbols_a and not symbols_b:
+        return {
+            "exchange_a": exchange_a,
+            "exchange_b": exchange_b,
+            "total_a": len(symbols_a),
+            "total_b": 0,
+            "count": len(symbols_a),
+            "markets": symbols_a[:100]
+        }
+    
     # Find common base currencies
     bases_a = {s['base'] for s in symbols_a}
     bases_b = {s['base'] for s in symbols_b}
     common_bases = bases_a & bases_b
     
+    logger.info(f"Common bases: {len(common_bases)}")
+    
     # Return symbols from exchange A that are also available on B
     common_markets = [s for s in symbols_a if s['base'] in common_bases]
+    
+    # If no common, return all from exchange A
+    if not common_markets:
+        common_markets = symbols_a
     
     # Sort by volume
     common_markets.sort(key=lambda x: x.get('volume_24h', 0), reverse=True)
@@ -857,7 +912,7 @@ async def get_markets(config_id: int = 1, db: AsyncSession = Depends(get_db)):
         "total_a": len(symbols_a),
         "total_b": len(symbols_b),
         "count": len(common_markets),
-        "markets": common_markets[:100]  # Limit to 100
+        "markets": common_markets[:100]
     }
 
 @app.get("/symbols", tags=["Symbols"])
