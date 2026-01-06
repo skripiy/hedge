@@ -76,7 +76,14 @@ class EtherealExchange(BaseExchange):
             async with session.get(f"{self.base_url}/v1/product") as resp:
                 if resp.status == 200:
                     data = await resp.json()
-                    self._markets = {p['symbol']: p for p in data.get('products', [])}
+                    # Response is array of products
+                    products = data if isinstance(data, list) else data.get('products', []) if isinstance(data, dict) else []
+                    self._markets = {}
+                    for p in products:
+                        if isinstance(p, dict):
+                            ticker = p.get('ticker', p.get('symbol', p.get('id', '')))
+                            if ticker:
+                                self._markets[ticker] = p
                     self._connected = True
                     logger.info(f"Connected to Ethereal {'testnet' if self.testnet else 'mainnet'}")
                     logger.info(f"Available markets: {list(self._markets.keys())}")
@@ -106,28 +113,44 @@ class EtherealExchange(BaseExchange):
         return normalized
     
     async def fetch_ticker(self, symbol: str) -> Optional[TickerData]:
-        """Fetch current ticker data"""
+        """Fetch current ticker data from Ethereal"""
         try:
             session = await self._get_session()
             normalized = self.normalize_symbol(symbol)
             
-            async with session.get(f"{self.base_url}/v1/ticker/{normalized}") as resp:
-                if resp.status == 200:
-                    data = await resp.json()
-                    
+            # Try to get from cached market data first
+            if normalized in self._markets:
+                market = self._markets[normalized]
+                mark_price = float(market.get('markPrice', 0) or market.get('lastPrice', 0) or 0)
+                if mark_price > 0:
                     ticker = TickerData(
                         symbol=symbol,
-                        bid=float(data.get('bestBid', 0)),
-                        ask=float(data.get('bestAsk', 0)),
-                        last=float(data.get('lastPrice', 0)),
+                        bid=mark_price * 0.999,  # Simulate bid
+                        ask=mark_price * 1.001,  # Simulate ask
+                        last=mark_price,
                         timestamp=datetime.utcnow()
                     )
-                    
                     self._last_ticker[symbol] = ticker
                     return ticker
-                else:
-                    logger.error(f"Ethereal ticker error: {resp.status}")
-                    return self._last_ticker.get(symbol)
+            
+            # Try TradingView last-price endpoint
+            async with session.get(f"https://tradingview.ethereal.trade/v1/last-price?symbol={normalized}", timeout=aiohttp.ClientTimeout(total=5)) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    price = float(data.get('price', 0) or data.get('last', 0) or 0)
+                    if price > 0:
+                        ticker = TickerData(
+                            symbol=symbol,
+                            bid=price * 0.999,
+                            ask=price * 1.001,
+                            last=price,
+                            timestamp=datetime.utcnow()
+                        )
+                        self._last_ticker[symbol] = ticker
+                        return ticker
+            
+            # Fallback to cached ticker
+            return self._last_ticker.get(symbol)
                     
         except Exception as e:
             logger.error(f"Error fetching Ethereal ticker {symbol}: {e}")
