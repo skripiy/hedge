@@ -75,13 +75,13 @@ class EtherealExchange(BaseExchange):
             # Fetch available markets
             async with session.get(f"{self.base_url}/v1/product") as resp:
                 if resp.status == 200:
-                    data = await resp.json()
-                    # Response is array of products
-                    products = data if isinstance(data, list) else data.get('products', []) if isinstance(data, dict) else []
+                    raw = await resp.json()
+                    # API returns {"data": [...products...]}
+                    products = raw.get('data', []) if isinstance(raw, dict) else raw if isinstance(raw, list) else []
                     self._markets = {}
                     for p in products:
                         if isinstance(p, dict):
-                            ticker = p.get('ticker', p.get('symbol', p.get('id', '')))
+                            ticker = p.get('ticker', '')
                             if ticker:
                                 self._markets[ticker] = p
                     self._connected = True
