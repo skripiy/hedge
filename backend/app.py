@@ -755,6 +755,111 @@ async def get_available_symbols(
         "symbols": symbols
     }
 
+
+@app.get("/markets", tags=["Symbols"])
+async def get_markets(config_id: int = 1, db: AsyncSession = Depends(get_db)):
+    """
+    Get common markets available on both configured exchanges.
+    Returns intersection of perpetual futures pairs.
+    """
+    import aiohttp
+    
+    # Get exchange config
+    result = await db.execute(select(BotConfig).where(BotConfig.id == config_id))
+    config = result.scalar_one_or_none()
+    
+    if not config:
+        return {"markets": [], "error": "Config not found"}
+    
+    exchange_a = config.exchange_a or "binance"
+    exchange_b = config.exchange_b or "bybit"
+    
+    async def fetch_symbols(exchange: str) -> list:
+        """Fetch symbols from an exchange"""
+        try:
+            if exchange.lower() in ['binance', 'bybit', 'okx']:
+                import ccxt.async_support as ccxt
+                exchange_class = getattr(ccxt, exchange.lower())
+                ex = exchange_class({'enableRateLimit': True, 'options': {'defaultType': 'future'}})
+                try:
+                    markets = await ex.load_markets()
+                    return [
+                        {
+                            'symbol': sym,
+                            'base': markets[sym].get('base', ''),
+                            'quote': markets[sym].get('quote', ''),
+                            'type': 'future',
+                            'last': markets[sym].get('info', {}).get('lastPrice', 0),
+                            'volume_24h': float(markets[sym].get('info', {}).get('volume', 0) or 0),
+                        }
+                        for sym in markets.keys()
+                        if ':' in sym  # Futures have ':' in symbol
+                    ]
+                finally:
+                    await ex.close()
+            elif exchange.lower() == 'ethereal':
+                async with aiohttp.ClientSession() as session:
+                    async with session.get("https://api.ethereal.trade/v1/products") as resp:
+                        if resp.status == 200:
+                            data = await resp.json()
+                            return [
+                                {
+                                    'symbol': p.get('symbol', ''),
+                                    'base': p.get('symbol', '').replace('USD', ''),
+                                    'quote': 'USD',
+                                    'type': 'perp',
+                                    'last': 0,
+                                    'volume_24h': 0,
+                                }
+                                for p in data.get('products', [])
+                            ]
+                return []
+            elif exchange.lower() == 'backpack':
+                async with aiohttp.ClientSession() as session:
+                    async with session.get("https://api.backpack.exchange/api/v1/markets") as resp:
+                        if resp.status == 200:
+                            data = await resp.json()
+                            return [
+                                {
+                                    'symbol': m.get('symbol', ''),
+                                    'base': m.get('baseSymbol', ''),
+                                    'quote': m.get('quoteSymbol', ''),
+                                    'type': 'perp' if 'PERP' in m.get('symbol', '') else 'spot',
+                                    'last': float(m.get('lastPrice', 0) or 0),
+                                    'volume_24h': float(m.get('volume', 0) or 0),
+                                }
+                                for m in data
+                                if 'PERP' in m.get('symbol', '')
+                            ]
+                return []
+        except Exception as e:
+            logger.error(f"Error fetching from {exchange}: {e}")
+            return []
+    
+    # Fetch from both exchanges
+    symbols_a = await fetch_symbols(exchange_a)
+    symbols_b = await fetch_symbols(exchange_b)
+    
+    # Find common base currencies
+    bases_a = {s['base'] for s in symbols_a}
+    bases_b = {s['base'] for s in symbols_b}
+    common_bases = bases_a & bases_b
+    
+    # Return symbols from exchange A that are also available on B
+    common_markets = [s for s in symbols_a if s['base'] in common_bases]
+    
+    # Sort by volume
+    common_markets.sort(key=lambda x: x.get('volume_24h', 0), reverse=True)
+    
+    return {
+        "exchange_a": exchange_a,
+        "exchange_b": exchange_b,
+        "total_a": len(symbols_a),
+        "total_b": len(symbols_b),
+        "count": len(common_markets),
+        "markets": common_markets[:100]  # Limit to 100
+    }
+
 @app.get("/symbols", tags=["Symbols"])
 async def get_symbols(config_id: int = 1, db: AsyncSession = Depends(get_db)):
     """Get all configured symbols"""
