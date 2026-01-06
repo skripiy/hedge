@@ -759,6 +759,67 @@ async def get_available_symbols(
     }
 
 
+@app.get("/rates", tags=["Rates"])
+async def get_rates(config_id: int = 1, db: AsyncSession = Depends(get_db)):
+    """
+    Get live rates for all configured symbols from both exchanges.
+    Returns spread, prices, and signals.
+    """
+    import aiohttp
+    
+    # Get config
+    result = await db.execute(select(BotConfig).where(BotConfig.id == config_id))
+    config = result.scalar_one_or_none()
+    
+    if not config:
+        return {"rates": [], "error": "Config not found"}
+    
+    # Get configured symbols
+    result = await db.execute(
+        select(SymbolConfig).where(
+            and_(SymbolConfig.config_id == config_id, SymbolConfig.enabled == True)
+        )
+    )
+    symbols = result.scalars().all()
+    
+    if not symbols:
+        return {
+            "rates": [],
+            "exchange_a": config.exchange_a or "binance",
+            "exchange_b": config.exchange_b or "bybit",
+            "timestamp": datetime.utcnow().isoformat()
+        }
+    
+    exchange_a = config.exchange_a or "binance"
+    exchange_b = config.exchange_b or "bybit"
+    
+    rates = []
+    
+    # For each symbol, fetch prices from both exchanges
+    for sym in symbols:
+        symbol = sym.symbol
+        
+        # Simple placeholder rates for now
+        # In production, this would call the exchange connectors
+        rate = {
+            "symbol": symbol,
+            "enabled": sym.enabled,
+            "price_a": 0,
+            "price_b": 0,
+            "spread": 0,
+            "spread_pct": 0,
+            "volume_24h": 0,
+            "signal": "NEUTRAL"
+        }
+        rates.append(rate)
+    
+    return {
+        "rates": rates,
+        "exchange_a": exchange_a,
+        "exchange_b": exchange_b,
+        "timestamp": datetime.utcnow().isoformat()
+    }
+
 @app.get("/markets", tags=["Symbols"])
 async def get_markets(config_id: int = 1, db: AsyncSession = Depends(get_db)):
     """
