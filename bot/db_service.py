@@ -317,10 +317,10 @@ class DatabaseService:
         fees_paid: float,
         close_reason: str
     ) -> bool:
-        """Close a trade with final PnL"""
+        """Close a trade with final PnL and update balance"""
         try:
             async with self.async_session() as session:
-                from backend.models import Trade, TradeStatus
+                from backend.models import Trade, TradeStatus, BotConfig
                 
                 result = await session.execute(
                     select(Trade).where(Trade.trade_id == trade_id)
@@ -328,6 +328,16 @@ class DatabaseService:
                 trade = result.scalar_one_or_none()
                 
                 if trade:
+                    now = datetime.utcnow()
+                    
+                    # Calculate hold duration
+                    hold_seconds = 0
+                    if trade.open_time:
+                        hold_seconds = int((now - trade.open_time).total_seconds())
+                    
+                    # Calculate volume generated (position_size × 2 × leverage for round trip)
+                    volume = (trade.entry_amount_usdt or 0) * 2
+                    
                     trade.status = TradeStatus.CLOSED
                     trade.exit_price_a = exit_price_a
                     trade.exit_price_b = exit_price_b
@@ -336,10 +346,20 @@ class DatabaseService:
                     trade.pnl_net = pnl_net
                     trade.fees_paid = fees_paid
                     trade.close_reason = close_reason
-                    trade.close_time = datetime.utcnow()
+                    trade.close_time = now
+                    trade.hold_duration_seconds = hold_seconds
+                    trade.volume_generated = volume
+                    
+                    # Update BotConfig current_balance
+                    config_result = await session.execute(
+                        select(BotConfig).where(BotConfig.id == trade.config_id)
+                    )
+                    config = config_result.scalar_one_or_none()
+                    if config:
+                        config.current_balance = (config.current_balance or 10000) + pnl_net
                     
                     await session.commit()
-                    logger.info(f"Trade closed: {trade_id}, PnL: {pnl_net}")
+                    logger.info(f"Trade closed: {trade_id}, PnL: {pnl_net:.4f}, Hold: {hold_seconds}s, Volume: ${volume}")
                     return True
                 return False
                 

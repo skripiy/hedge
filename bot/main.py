@@ -473,7 +473,9 @@ class HedgeBot:
                                 # Calculate trade params
                                 avg_price = (price_a + price_b) / 2
                                 amount = position_size / avg_price
-                                fees = position_size * (self.config.get('taker_fee', 0.05) / 100) * 2
+                                # Total fees: 4 transactions (open long, open short, close long, close short)
+                                fee_rate = self.config.get('taker_fee', 0.05) / 100
+                                fees = position_size * fee_rate * 4  # Entry + Exit fees
                                 
                                 # Save trade to database
                                 trade_id = await self.db_service.create_trade_simple(
