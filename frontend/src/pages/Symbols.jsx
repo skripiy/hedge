@@ -328,9 +328,9 @@ function MarketRow({ market, isConfigured, onAdd, formatVolume }) {
             <span style={{
                 fontFamily: 'monospace',
                 fontSize: '0.75rem',
-                color: market.change_24h > 0 ? 'var(--success)' : market.change_24h < 0 ? 'var(--danger)' : 'var(--text-muted)'
+                color: (market.change_24h || 0) > 0 ? 'var(--success)' : (market.change_24h || 0) < 0 ? 'var(--danger)' : 'var(--text-muted)'
             }}>
-                {market.change_24h !== null ? `${market.change_24h > 0 ? '+' : ''}${market.change_24h}%` : '-'}
+                {market.change_24h != null && market.change_24h !== undefined ? `${market.change_24h > 0 ? '+' : ''}${market.change_24h.toFixed(2)}%` : '-'}
             </span>
             <button
                 className="btn btn-outline"
