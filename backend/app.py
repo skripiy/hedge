@@ -9,6 +9,9 @@ from sqlalchemy import select, update, func, and_
 from typing import List, Optional
 from datetime import datetime, timedelta
 import uuid
+import logging
+
+logger = logging.getLogger(__name__)
 
 from backend.database import get_db, init_db, close_db
 from backend.models import (
