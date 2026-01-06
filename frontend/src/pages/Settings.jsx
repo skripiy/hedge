@@ -191,9 +191,11 @@ export default function Settings() {
                                     value={formData.exchange_a}
                                     onChange={handleChange}
                                 >
-                                    <option value="binance">Binance</option>
-                                    <option value="bybit">Bybit</option>
-                                    <option value="okx">OKX</option>
+                                    <option value="binance">Binance (CCXT)</option>
+                                    <option value="bybit">Bybit (CCXT)</option>
+                                    <option value="okx">OKX (CCXT)</option>
+                                    <option value="ethereal">Ethereal Trade (DEX)</option>
+                                    <option value="backpack">Backpack Exchange</option>
                                 </select>
                             </div>
                             <div className="form-group">
@@ -204,9 +206,11 @@ export default function Settings() {
                                     value={formData.exchange_b}
                                     onChange={handleChange}
                                 >
-                                    <option value="bybit">Bybit</option>
-                                    <option value="binance">Binance</option>
-                                    <option value="okx">OKX</option>
+                                    <option value="bybit">Bybit (CCXT)</option>
+                                    <option value="binance">Binance (CCXT)</option>
+                                    <option value="okx">OKX (CCXT)</option>
+                                    <option value="ethereal">Ethereal Trade (DEX)</option>
+                                    <option value="backpack">Backpack Exchange</option>
                                 </select>
                             </div>
                         </div>
