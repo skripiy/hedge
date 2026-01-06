@@ -690,6 +690,71 @@ async def get_analytics_summary(config_id: int = 1, db: AsyncSession = Depends(g
 
 # ============ Symbol Configuration ============
 
+@app.get("/available-symbols", tags=["Symbols"])
+async def get_available_symbols(
+    exchange: str = "binance",
+    quote_currency: str = "USDT"
+):
+    """
+    Fetch available trading pairs from an exchange.
+    Supports: binance, bybit, okx, ethereal, backpack
+    """
+    import aiohttp
+    
+    symbols = []
+    
+    try:
+        if exchange.lower() in ['binance', 'bybit', 'okx']:
+            # Use CCXT for CEX
+            import ccxt.async_support as ccxt
+            exchange_class = getattr(ccxt, exchange.lower())
+            ex = exchange_class({'enableRateLimit': True, 'options': {'defaultType': 'future'}})
+            
+            try:
+                markets = await ex.load_markets()
+                symbols = [
+                    symbol for symbol in markets.keys()
+                    if quote_currency in symbol and ':' in symbol  # Futures pairs
+                ]
+                symbols = sorted(symbols)[:50]  # Limit to 50
+            finally:
+                await ex.close()
+                
+        elif exchange.lower() == 'ethereal':
+            # Ethereal Trade - fetch from API
+            async with aiohttp.ClientSession() as session:
+                async with session.get("https://api.ethereal.trade/v1/products") as resp:
+                    if resp.status == 200:
+                        data = await resp.json()
+                        symbols = [p.get('symbol', '') for p in data.get('products', [])]
+                    else:
+                        symbols = ['ETHUSD', 'BTCUSD', 'SOLUSD']  # Fallback
+                        
+        elif exchange.lower() == 'backpack':
+            # Backpack Exchange - fetch from API
+            async with aiohttp.ClientSession() as session:
+                async with session.get("https://api.backpack.exchange/api/v1/markets") as resp:
+                    if resp.status == 200:
+                        data = await resp.json()
+                        symbols = [
+                            m.get('symbol', '') for m in data 
+                            if 'PERP' in m.get('symbol', '')  # Filter perpetuals
+                        ]
+                    else:
+                        symbols = ['ETH_USD_PERP', 'BTC_USD_PERP', 'SOL_USD_PERP']  # Fallback
+        else:
+            return {"error": f"Exchange '{exchange}' not supported", "symbols": []}
+            
+    except Exception as e:
+        logger.error(f"Error fetching symbols from {exchange}: {e}")
+        return {"error": str(e), "symbols": []}
+    
+    return {
+        "exchange": exchange,
+        "count": len(symbols),
+        "symbols": symbols
+    }
+
 @app.get("/symbols", tags=["Symbols"])
 async def get_symbols(config_id: int = 1, db: AsyncSession = Depends(get_db)):
     """Get all configured symbols"""
